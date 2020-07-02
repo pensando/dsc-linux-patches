@@ -1,0 +1,43 @@
+commit ec87c758761c7febaf9171727677d4a60ce1ddbd
+Author: David Clear <dac2@pensando.io>
+Date:   Tue Mar 17 14:05:15 2020 -0700
+
+    watchdog/softdog.c: Provide a Kconfig option to set the default
+    value for soft_panic.
+    
+    This commit adds the SOFT_WATCHDOG_PANIC_ACTION_ONLY option
+    which, if enabled, causes the a softdog expiry to panic
+    the kernel rather than reboot the system.
+
+diff --git a/drivers/watchdog/Kconfig b/drivers/watchdog/Kconfig
+index c722cbf..7d2ec4a 100644
+--- a/drivers/watchdog/Kconfig
++++ b/drivers/watchdog/Kconfig
+@@ -82,6 +82,14 @@ config SOFT_WATCHDOG
+ 	  To compile this driver as a module, choose M here: the
+ 	  module will be called softdog.
+ 
++config SOFT_WATCHDOG_PANIC_ACTION_ONLY
++	bool "Panic but do not restart on expiry"
++	depends on SOFT_WATCHDOG
++	default n
++	help
++	  Enable this if you want the softdog to panic after the timer expires.
++	  By default on expiration the watchdog will reboot the system.
++
+ config SOFT_WATCHDOG_PRETIMEOUT
+ 	bool "Software watchdog pretimeout governor support"
+ 	depends on SOFT_WATCHDOG && WATCHDOG_PRETIMEOUT_GOV
+diff --git a/drivers/watchdog/softdog.c b/drivers/watchdog/softdog.c
+index 0607406..4115dfb 100644
+--- a/drivers/watchdog/softdog.c
++++ b/drivers/watchdog/softdog.c
+@@ -48,7 +48,7 @@ module_param(soft_noboot, int, 0);
+ MODULE_PARM_DESC(soft_noboot,
+ 	"Softdog action, set to 1 to ignore reboots, 0 to reboot (default=0)");
+ 
+-static int soft_panic;
++static int soft_panic = IS_ENABLED(CONFIG_SOFT_WATCHDOG_PANIC_ACTION_ONLY);
+ module_param(soft_panic, int, 0);
+ MODULE_PARM_DESC(soft_panic,
+ 	"Softdog action, set to 1 to panic, 0 to reboot (default=0)");

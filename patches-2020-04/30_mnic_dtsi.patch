@@ -1,0 +1,51 @@
+commit ddef9df298f93daf594781c38747d030fba8d17a
+Author: David Clear <dac2@pensando.io>
+Date:   Mon Apr 6 18:22:55 2020 -0700
+
+    arch/arm64/boot/dts/pensando: Add mnic nodes to the
+    devicetree.
+
+diff --git a/arch/arm64/boot/dts/pensando/capri.dtsi b/arch/arm64/boot/dts/pensando/capri.dtsi
+index f5cb8af..90cf2ad 100644
+--- a/arch/arm64/boot/dts/pensando/capri.dtsi
++++ b/arch/arm64/boot/dts/pensando/capri.dtsi
+@@ -325,6 +325,39 @@
+ 			status = "disabled";
+ 		};
+ 
++		mnet0: mnet0 {
++			compatible = "pensando,mnet";
++			msi-parent = <&its 0x0>;
++		};
++		mnet1: mnet1 {
++			compatible = "pensando,mnet";
++			msi-parent = <&its 0x1>;
++		};
++		mnet2: mnet2 {
++			compatible = "pensando,mnet";
++			msi-parent = <&its 0x2>;
++		};
++		mnet3: mnet3 {
++			compatible = "pensando,mnet";
++			msi-parent = <&its 0x3>;
++		};
++		mnet4: mnet4 {
++			compatible = "pensando,mnet";
++			msi-parent = <&its 0x4>;
++		};
++		mnet5: mnet5 {
++			compatible = "pensando,mnet";
++			msi-parent = <&its 0x5>;
++		};
++		mnet6: mnet6 {
++			compatible = "pensando,mnet";
++			msi-parent = <&its 0x6>;
++		};
++		mnet7: mnet7 {
++			compatible = "pensando,mnet";
++			msi-parent = <&its 0x7>;
++		};
++
+ 		/* UIO device using interrupt line PCIEMAC */
+ 		pciemac {
+ 			#address-cells = <2>;

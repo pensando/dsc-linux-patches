@@ -1,0 +1,193 @@
+commit 71c7616a12c84a7953712a6785b201156f97f705
+Author: David Clear <dac2@pensando.io>
+Date:   Tue Mar 17 12:53:54 2020 -0700
+
+    fs/proc: Add /proc/xmaps file, which is similar to /proc/maps
+    but allows the arch to decode the pgprot value.
+
+diff --git a/arch/arm64/mm/Makefile b/arch/arm64/mm/Makefile
+index 849c1df..58ff675 100644
+--- a/arch/arm64/mm/Makefile
++++ b/arch/arm64/mm/Makefile
+@@ -8,6 +8,7 @@ obj-$(CONFIG_ARM64_PTDUMP_CORE)	+= dump.o
+ obj-$(CONFIG_ARM64_PTDUMP_DEBUGFS)	+= ptdump_debugfs.o
+ obj-$(CONFIG_NUMA)		+= numa.o
+ obj-$(CONFIG_DEBUG_VIRTUAL)	+= physaddr.o
++obj-$(CONFIG_PROC_XMAPS)	+= proc_xmaps.o
+ KASAN_SANITIZE_physaddr.o	+= n
+ 
+ obj-$(CONFIG_KASAN)		+= kasan_init.o
+diff --git a/arch/arm64/mm/proc_xmaps.c b/arch/arm64/mm/proc_xmaps.c
+new file mode 100644
+index 00000000..0989926
+--- /dev/null
++++ b/arch/arm64/mm/proc_xmaps.c
+@@ -0,0 +1,33 @@
++// SPDX-License-Identifier: GPL-2.0
++#include <linux/mm.h>
++#include <linux/seq_file.h>
++#include <linux/pagemap.h>
++
++void proc_xmaps_show_vma_header_prefix(struct seq_file *m,
++				   unsigned long start, unsigned long end,
++				   vm_flags_t flags, unsigned long long pgoff,
++				   dev_t dev, unsigned long ino, pgprot_t prot)
++{
++	static const char *shnams[] = {
++		"NonSh", "Rsvd", "Outer", "Inner"
++	};
++	static const char *names[] = {
++		"Device_nGnRnE", "Device_nGnRE", "Device_GRE",
++		"Normal_NC", "Normal", "Normal_WT", "ATTR(6)",
++		"ATTR(7)"
++	};
++
++	seq_setwidth(m, 25 + sizeof(void *) * 6 - 1);
++	seq_printf(m, "%09lx-%09lx %c%c%c%c %09llx %02x:%02x %5lu %016llx %-5s %-13s ",
++		start,
++		end,
++		flags & VM_READ ? 'r' : '-',
++		flags & VM_WRITE ? 'w' : '-',
++		flags & VM_EXEC ? 'x' : '-',
++		flags & VM_MAYSHARE ? 's' : 'p',
++		pgoff,
++		MAJOR(dev), MINOR(dev), ino,
++		pgprot_val(prot),
++		shnams[(pgprot_val(prot) >> 8) & 0x3],
++		names[(pgprot_val(prot) >> 2) & 0x7]);
++}
+diff --git a/fs/proc/Kconfig b/fs/proc/Kconfig
+index 1ade120..902088b 100644
+--- a/fs/proc/Kconfig
++++ b/fs/proc/Kconfig
+@@ -81,3 +81,11 @@ config PROC_CHILDREN
+ 
+ 	  Say Y if you are running any user-space software which takes benefit from
+ 	  this interface. For example, rkt is such a piece of software.
++
++config PROC_XMAPS
++	bool "Include /proc/<pid>/xmaps file"
++        depends on PROC_FS && ARM64
++	default n
++	help
++	  Provides a file similar to /proc/<pid>/maps which also include
++	  architecture-specific decodes of the PTE.
+diff --git a/fs/proc/base.c b/fs/proc/base.c
+index 9d357b2..70193bb 100644
+--- a/fs/proc/base.c
++++ b/fs/proc/base.c
+@@ -2919,6 +2919,9 @@ static const struct pid_entry tgid_base_stuff[] = {
+ 	ONE("stat",       S_IRUGO, proc_tgid_stat),
+ 	ONE("statm",      S_IRUGO, proc_pid_statm),
+ 	REG("maps",       S_IRUGO, proc_pid_maps_operations),
++#ifdef CONFIG_PROC_XMAPS
++	REG("xmaps",      S_IRUGO, proc_pid_xmaps_operations),
++#endif
+ #ifdef CONFIG_NUMA
+ 	REG("numa_maps",  S_IRUGO, proc_pid_numa_maps_operations),
+ #endif
+diff --git a/fs/proc/internal.h b/fs/proc/internal.h
+index a34195e..fe31c33 100644
+--- a/fs/proc/internal.h
++++ b/fs/proc/internal.h
+@@ -286,6 +286,9 @@ struct proc_maps_private {
+ struct mm_struct *proc_mem_open(struct inode *inode, unsigned int mode);
+ 
+ extern const struct file_operations proc_pid_maps_operations;
++#ifdef CONFIG_PROC_XMAPS
++extern const struct file_operations proc_pid_xmaps_operations;
++#endif
+ extern const struct file_operations proc_tid_maps_operations;
+ extern const struct file_operations proc_pid_numa_maps_operations;
+ extern const struct file_operations proc_tid_numa_maps_operations;
+@@ -300,3 +303,8 @@ extern unsigned long task_statm(struct mm_struct *,
+ 				unsigned long *, unsigned long *,
+ 				unsigned long *, unsigned long *);
+ extern void task_mem(struct seq_file *, struct mm_struct *);
++#ifdef CONFIG_PROC_XMAPS
++extern void proc_xmaps_show_vma_header_prefix(struct seq_file *m,
++	unsigned long start, unsigned long end, vm_flags_t flags,
++	unsigned long long pgoff, dev_t dev, unsigned long ino, pgprot_t prot);
++#endif
+diff --git a/fs/proc/task_mmu.c b/fs/proc/task_mmu.c
+index 6744bd7..ae1a2fd 100644
+--- a/fs/proc/task_mmu.c
++++ b/fs/proc/task_mmu.c
+@@ -298,7 +298,7 @@ static void show_vma_header_prefix(struct seq_file *m,
+ }
+ 
+ static void
+-show_map_vma(struct seq_file *m, struct vm_area_struct *vma, int is_pid)
++show_map_vma(struct seq_file *m, struct vm_area_struct *vma, int is_pid, int is_xmap)
+ {
+ 	struct mm_struct *mm = vma->vm_mm;
+ 	struct file *file = vma->vm_file;
+@@ -318,7 +318,14 @@ show_map_vma(struct seq_file *m, struct vm_area_struct *vma, int is_pid)
+ 
+ 	start = vma->vm_start;
+ 	end = vma->vm_end;
+-	show_vma_header_prefix(m, start, end, flags, pgoff, dev, ino);
++	if (is_xmap) {
++#ifdef CONFIG_PROC_XMAPS
++		proc_xmaps_show_vma_header_prefix(m, start, end, flags, pgoff,
++				dev, ino, vma->vm_page_prot);
++#endif
++	} else {
++		show_vma_header_prefix(m, start, end, flags, pgoff, dev, ino);
++	}
+ 
+ 	/*
+ 	 * Print the dentry name for named mappings, and a
+@@ -363,7 +370,7 @@ show_map_vma(struct seq_file *m, struct vm_area_struct *vma, int is_pid)
+ 
+ static int show_map(struct seq_file *m, void *v, int is_pid)
+ {
+-	show_map_vma(m, v, is_pid);
++	show_map_vma(m, v, is_pid, 0);
+ 	m_cache_vma(m, v);
+ 	return 0;
+ }
+@@ -409,6 +416,34 @@ const struct file_operations proc_pid_maps_operations = {
+ 	.release	= proc_map_release,
+ };
+ 
++#ifdef CONFIG_PROC_XMAPS
++static int show_pid_xmap(struct seq_file *m, void *v)
++{
++	show_map_vma(m, v, 1, 1);
++	m_cache_vma(m, v);
++	return 0;
++}
++
++static const struct seq_operations proc_pid_xmaps_op = {
++	.start	= m_start,
++	.next	= m_next,
++	.stop	= m_stop,
++	.show	= show_pid_xmap
++};
++
++static int pid_xmaps_open(struct inode *inode, struct file *file)
++{
++	return do_maps_open(inode, file, &proc_pid_xmaps_op);
++}
++
++const struct file_operations proc_pid_xmaps_operations = {
++	.open		= pid_xmaps_open,
++	.read		= seq_read,
++	.llseek		= seq_lseek,
++	.release	= proc_map_release,
++};
++#endif
++
+ const struct file_operations proc_tid_maps_operations = {
+ 	.open		= tid_maps_open,
+ 	.read		= seq_read,
+@@ -797,7 +832,7 @@ static int show_smap(struct seq_file *m, void *v, int is_pid)
+ 		mss->pss_locked += mss->pss;
+ 
+ 	if (!rollup_mode) {
+-		show_map_vma(m, vma, is_pid);
++		show_map_vma(m, vma, is_pid, 0);
+ 	} else if (last_vma) {
+ 		show_vma_header_prefix(
+ 			m, mss->first_vma_start, vma->vm_end, 0, 0, 0, 0);
