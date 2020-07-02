@@ -180,7 +180,7 @@ Some of the P4 memory is I/O coherent with Linux and some is not.
 The memory that is I/O coherent is coherent in the "Outer Shareable"
 domain, and the memory that not coherent is "Non-Shareable".
 
-In to properly map these types of pages we've had to make some changes
+In order to properly map these types of pages we've had to make some changes
 to the Linux PTE code.  These changes are application-specific
 (as they're related to how we partition memory) and unsuitable
 for upstreaming.
