@@ -155,7 +155,7 @@ perform ioctls to access the on-board CPLD.
 **18_capri_cadence_quadspi_apb_ahb_hazard.patch**<br>
 Re: _07_kernel_org_61dc8493_cadence_quadspi_wr_delay_
 
-In Pensnado ASICs the APB write to the Cadence controller may
+In Pensando ASICs the APB write to the Cadence controller may
 be subject to different delays along the (multi-hop) APB chain.
 
 The safest way to avoid the APB->AHB hazard is to bounce an extra
@@ -268,7 +268,7 @@ a new /proc/<pid>/xmaps file, similar to /proc/<pid>/maps, which
 decodes the PTE attributes so we can verify that memory pages
 have been mapped with correct shareability attributes.
 
-This is debug code, somewhat, and Pensnado A72-specific.
+This is debug code, somewhat, and Pensando A72-specific.
 
 **33_configs_and_dts.patch**<br>
 This change includes the current kernel configs and devicetree for
