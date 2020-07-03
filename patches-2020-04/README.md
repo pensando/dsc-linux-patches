@@ -260,7 +260,8 @@ This is a device-tree change to instantiate multiple mnic devices.
 This is a read-performance modification that yields ~30% increase in
 throughput on the ASIC and even more on the FPGA emulation platform.
 
-It's not a pretty patch, and not relevant for the ASIC.
+It's not a pretty patch, and not essential for the ASIC (where the flash
+runs comfortably fast).
 
 **32_proc_xmaps.patch**<br>
 Related to _29_cap_mem_ and _24_precise_pte_control_, this patch adds
