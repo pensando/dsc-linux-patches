@@ -1,0 +1,85 @@
+commit d228d6d04bdee9f8cc03bb658893403cea3c978e
+Author: David Clear <dac2@pensando.io>
+Date:   Tue Mar 17 14:18:46 2020 -0700
+
+    arch/arm64: Provide for precise control of pgprot
+    
+    This diff allows the kernel to map pages with precise control
+    of shareability (e.g. outer or non-shared) as opposed to
+    all memory mappings being inner shareable.
+
+diff --git a/arch/arm64/include/asm/pgtable-hwdef.h b/arch/arm64/include/asm/pgtable-hwdef.h
+index eb0c2bd..9193e83 100644
+--- a/arch/arm64/include/asm/pgtable-hwdef.h
++++ b/arch/arm64/include/asm/pgtable-hwdef.h
+@@ -157,7 +157,6 @@
+ #define PTE_TABLE_BIT		(_AT(pteval_t, 1) << 1)
+ #define PTE_USER		(_AT(pteval_t, 1) << 6)		/* AP[1] */
+ #define PTE_RDONLY		(_AT(pteval_t, 1) << 7)		/* AP[2] */
+-#define PTE_SHARED		(_AT(pteval_t, 3) << 8)		/* SH[1:0], inner shareable */
+ #define PTE_AF			(_AT(pteval_t, 1) << 10)	/* Access Flag */
+ #define PTE_NG			(_AT(pteval_t, 1) << 11)	/* nG */
+ #define PTE_DBM			(_AT(pteval_t, 1) << 51)	/* Dirty Bit Management */
+@@ -173,6 +172,15 @@
+ #define PTE_ATTRINDX_MASK	(_AT(pteval_t, 7) << 2)
+ 
+ /*
++ * SH[1:0] encoding
++ */
++#define PTE_SH(s)		(_AT(pteval_t, (s)) << 8)
++#define PTE_SH_MASK		(_AT(pteval_t, 3) << 8)
++#define PTE_SHARED		PTE_SH(3)	/* default: inner shareable */
++#define PTE_SHARED_OUTER	PTE_SH(2)	/* outer shareable */
++#define PTE_SHARED_NONE		PTE_SH(0)	/* non-shared */
++
++/*
+  * 2nd stage PTE definitions
+  */
+ #define PTE_S2_RDONLY		(_AT(pteval_t, 1) << 6)   /* HAP[2:1] */
+diff --git a/arch/arm64/include/asm/pgtable.h b/arch/arm64/include/asm/pgtable.h
+index 5ad4559..02cf824 100644
+--- a/arch/arm64/include/asm/pgtable.h
++++ b/arch/arm64/include/asm/pgtable.h
+@@ -379,6 +379,15 @@ static inline int pmd_protnone(pmd_t pmd)
+ 	__pgprot_modify(prot, PTE_ATTRINDX_MASK, PTE_ATTRINDX(MT_NORMAL_NC) | PTE_PXN | PTE_UXN)
+ #define pgprot_device(prot) \
+ 	__pgprot_modify(prot, PTE_ATTRINDX_MASK, PTE_ATTRINDX(MT_DEVICE_nGnRE) | PTE_PXN | PTE_UXN)
++
++/*
++ * Mark the pgprot value as non-shared or outer-shareable
++ */
++#define pgprot_nonshared(prot) \
++	__pgprot_modify(prot, PTE_SH_MASK, PTE_SHARED_NONE)
++#define pgprot_outershared(prot) \
++	__pgprot_modify(prot, PTE_SH_MASK, PTE_SHARED_OUTER)
++
+ #define __HAVE_PHYS_MEM_ACCESS_PROT
+ struct file;
+ extern pgprot_t phys_mem_access_prot(struct file *file, unsigned long pfn,
+@@ -715,6 +724,26 @@ extern pgd_t idmap_pg_dir[PTRS_PER_PGD];
+ 
+ extern int kern_addr_valid(unsigned long addr);
+ 
++#define pgprot_modify   pgprot_modify
++static inline pgprot_t pgprot_modify(pgprot_t oldprot, pgprot_t newprot)
++{
++	// match ATTRIDX
++	if (pgprot_val(oldprot) == pgprot_val(pgprot_noncached(oldprot)))
++		newprot = pgprot_noncached(newprot);
++	if (pgprot_val(oldprot) == pgprot_val(pgprot_writecombine(oldprot)))
++		newprot = pgprot_writecombine(newprot);
++	if (pgprot_val(oldprot) == pgprot_val(pgprot_device(oldprot)))
++		newprot = pgprot_device(newprot);
++
++	// match shareability
++	if (pgprot_val(oldprot) == pgprot_val(pgprot_nonshared(oldprot)))
++		newprot = pgprot_nonshared(newprot);
++	if (pgprot_val(oldprot) == pgprot_val(pgprot_outershared(oldprot)))
++		newprot = pgprot_outershared(newprot);
++
++	return newprot;
++}
++
+ #include <asm-generic/pgtable.h>
+ 
+ void pgd_cache_init(void);

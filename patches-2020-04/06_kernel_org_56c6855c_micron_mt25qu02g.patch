@@ -1,0 +1,29 @@
+commit 56c6855c81c8a6828b5d65aa974cd50f4b67760c
+Author: Thor Thayer <thor.thayer@linux.intel.com>
+Date:   Thu Apr 5 14:12:49 2018 -0500
+
+    mtd: spi-nor: Add Micron MT25QU02 support
+    
+    Add support for a new Micron 2Gb Flash memory part.
+    Datasheet is available: mt25q_qlkt_l_02g_cbb_0.pdf
+    
+    Testing was done on a Stratix10 SoCFPGA Development Kit.
+    
+    Reported-by: Sujith Chidurala <sujith.chakra.chidurala@intel.com>
+    Tested-by: Paul Kim <paul.kim@intel.com>
+    Signed-off-by: Thor Thayer <thor.thayer@linux.intel.com>
+    Acked-by: Marek Vasut <marek.vasut@gmail.com>
+    Signed-off-by: Boris Brezillon <boris.brezillon@bootlin.com>
+
+diff --git a/drivers/mtd/spi-nor/spi-nor.c b/drivers/mtd/spi-nor/spi-nor.c
+index 5bfa36e..8b45976 100644
+--- a/drivers/mtd/spi-nor/spi-nor.c
++++ b/drivers/mtd/spi-nor/spi-nor.c
+@@ -1087,6 +1087,7 @@ static const struct flash_info spi_nor_ids[] = {
+ 	{ "n25q512ax3",  INFO(0x20ba20, 0, 64 * 1024, 1024, SECT_4K | USE_FSR | SPI_NOR_QUAD_READ) },
+ 	{ "n25q00",      INFO(0x20ba21, 0, 64 * 1024, 2048, SECT_4K | USE_FSR | SPI_NOR_QUAD_READ | NO_CHIP_ERASE) },
+ 	{ "n25q00a",     INFO(0x20bb21, 0, 64 * 1024, 2048, SECT_4K | USE_FSR | SPI_NOR_QUAD_READ | NO_CHIP_ERASE) },
++	{ "mt25qu02g",   INFO(0x20bb22, 0, 64 * 1024, 4096, SECT_4K | USE_FSR | SPI_NOR_QUAD_READ | NO_CHIP_ERASE) },
+ 
+ 	/* PMC */
+ 	{ "pm25lv512",   INFO(0,        0, 32 * 1024,    2, SECT_4K_PMC) },

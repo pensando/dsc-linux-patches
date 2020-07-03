@@ -1,0 +1,21 @@
+commit 8ef4e2602a106219442ff0e71f2e0aa416bd1865
+Author: David Clear <dac2@pensando.io>
+Date:   Tue Mar 17 14:37:20 2020 -0700
+
+    drivers/spi/spidev.c: Add pensando,cpld device tree compat entry
+    
+    The Pensando ASICs uss a spidev interface to access the board
+    CPLD.  This commit adds support for the entry in spidev.c
+
+diff --git a/drivers/spi/spidev.c b/drivers/spi/spidev.c
+index cda1071..64f7038 100644
+--- a/drivers/spi/spidev.c
++++ b/drivers/spi/spidev.c
+@@ -669,6 +669,7 @@ static const struct of_device_id spidev_dt_ids[] = {
+ 	{ .compatible = "lineartechnology,ltc2488" },
+ 	{ .compatible = "ge,achc" },
+ 	{ .compatible = "semtech,sx1301" },
++	{ .compatible = "pensando,cpld" },
+ 	{},
+ };
+ MODULE_DEVICE_TABLE(of, spidev_dt_ids);

@@ -1,0 +1,87 @@
+commit fb80b2dbb8c353b2fc2b51ed6c259521cc2c29dd
+Author: David Clear <dac2@pensando.io>
+Date:   Tue Mar 17 10:24:45 2020 -0700
+
+    watchdog/dw_wdt.c: Support the reset pulse width from the
+    device-tree.
+    
+    The Designware WDT supports a programmable reset pulse width.
+    The new devicetree property "snps,reset-pulse-len" allows this to
+    be specified in units of APB clock cycles.
+
+diff --git a/drivers/watchdog/dw_wdt.c b/drivers/watchdog/dw_wdt.c
+index 36be987..f494e00 100644
+--- a/drivers/watchdog/dw_wdt.c
++++ b/drivers/watchdog/dw_wdt.c
+@@ -33,6 +33,7 @@
+ #include <linux/watchdog.h>
+ 
+ #define WDOG_CONTROL_REG_OFFSET		    0x00
++#define WDOG_CONTROL_REG_RPL_SHIFT	    2
+ #define WDOG_CONTROL_REG_WDT_EN_MASK	    0x01
+ #define WDOG_TIMEOUT_RANGE_REG_OFFSET	    0x04
+ #define WDOG_TIMEOUT_RANGE_TOPINIT_SHIFT    4
+@@ -56,6 +57,7 @@ struct dw_wdt {
+ 	unsigned long		rate;
+ 	struct watchdog_device	wdd;
+ 	struct reset_control	*rst;
++	u32			rpl;
+ };
+ 
+ #define to_dw_wdt(wdd)	container_of(wdd, struct dw_wdt, wdd)
+@@ -124,13 +126,15 @@ static int dw_wdt_set_timeout(struct watchdog_device *wdd, unsigned int top_s)
+ static int dw_wdt_start(struct watchdog_device *wdd)
+ {
+ 	struct dw_wdt *dw_wdt = to_dw_wdt(wdd);
++	u32 crval = dw_wdt->rpl << WDOG_CONTROL_REG_RPL_SHIFT;
+ 
+ 	dw_wdt_set_timeout(wdd, wdd->timeout);
+ 
+ 	set_bit(WDOG_HW_RUNNING, &wdd->status);
+ 
+-	writel(WDOG_CONTROL_REG_WDT_EN_MASK,
+-	       dw_wdt->regs + WDOG_CONTROL_REG_OFFSET);
++	writel(crval, dw_wdt->regs + WDOG_CONTROL_REG_OFFSET);
++	crval |= WDOG_CONTROL_REG_WDT_EN_MASK;
++	writel(crval, dw_wdt->regs + WDOG_CONTROL_REG_OFFSET);
+ 
+ 	return 0;
+ }
+@@ -146,9 +150,12 @@ static int dw_wdt_restart(struct watchdog_device *wdd,
+ 	if (val & WDOG_CONTROL_REG_WDT_EN_MASK)
+ 		writel(WDOG_COUNTER_RESTART_KICK_VALUE,
+ 		       dw_wdt->regs + WDOG_COUNTER_RESTART_REG_OFFSET);
+-	else
+-		writel(WDOG_CONTROL_REG_WDT_EN_MASK,
+-		       dw_wdt->regs + WDOG_CONTROL_REG_OFFSET);
++	else {
++		val = dw_wdt->rpl << WDOG_CONTROL_REG_RPL_SHIFT;
++		writel(val, dw_wdt->regs + WDOG_CONTROL_REG_OFFSET);
++		val |= WDOG_CONTROL_REG_WDT_EN_MASK;
++		writel(val, dw_wdt->regs + WDOG_CONTROL_REG_OFFSET);
++	}
+ 
+ 	/* wait for reset to assert... */
+ 	mdelay(500);
+@@ -211,6 +218,7 @@ static int dw_wdt_drv_probe(struct platform_device *pdev)
+ 	struct watchdog_device *wdd;
+ 	struct dw_wdt *dw_wdt;
+ 	struct resource *mem;
++	u32 reset_pulse_len;
+ 	int ret;
+ 
+ 	dw_wdt = devm_kzalloc(dev, sizeof(*dw_wdt), GFP_KERNEL);
+@@ -242,6 +250,13 @@ static int dw_wdt_drv_probe(struct platform_device *pdev)
+ 		goto out_disable_clk;
+ 	}
+ 
++	reset_pulse_len = 2;
++#ifdef CONFIG_OF
++	of_property_read_u32(pdev->dev.of_node,
++			"snps,reset-pulse-len", &reset_pulse_len);
++#endif
++	dw_wdt->rpl = min(ilog2(reset_pulse_len) - 1, 7);
++
+ 	reset_control_deassert(dw_wdt->rst);
+ 
+ 	wdd = &dw_wdt->wdd;

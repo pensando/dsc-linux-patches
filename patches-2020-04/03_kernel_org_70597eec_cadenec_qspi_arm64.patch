@@ -1,0 +1,26 @@
+commit 70597eec673bad7c43b56ea23b666a951522aad1
+Author: Thor Thayer <thor.thayer@linux.intel.com>
+Date:   Fri Sep 29 11:07:49 2017 -0500
+
+    mtd: spi-nor: Allow Cadence QSPI support for ARM64
+    
+    Allow ARM64 support for the Cadence QSPI interface by
+    adding ARM64 as a dependency.
+    
+    Signed-off-by: Thor Thayer <thor.thayer@linux.intel.com>
+    Reviewed-by: Marek Vasut <marek.vasut@gmail.com>
+    Signed-off-by: Cyrille Pitchen <cyrille.pitchen@wedev4u.fr>
+
+diff --git a/drivers/mtd/spi-nor/Kconfig b/drivers/mtd/spi-nor/Kconfig
+index 69c638d..f26aaa6 100644
+--- a/drivers/mtd/spi-nor/Kconfig
++++ b/drivers/mtd/spi-nor/Kconfig
+@@ -50,7 +50,7 @@ config SPI_ATMEL_QUADSPI
+ 
+ config SPI_CADENCE_QUADSPI
+ 	tristate "Cadence Quad SPI controller"
+-	depends on OF && (ARM || COMPILE_TEST)
++	depends on OF && (ARM || ARM64 || COMPILE_TEST)
+ 	help
+ 	  Enable support for the Cadence Quad SPI Flash controller.
+ 

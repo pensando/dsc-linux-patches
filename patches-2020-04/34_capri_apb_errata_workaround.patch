@@ -1,0 +1,473 @@
+commit 0a3f6e53307e04ac79c4a594bbaa6463fdedd605
+Author: David Clear <dac2@pensando.io>
+Date:   Mon Apr 6 18:47:58 2020 -0700
+
+    Capri has an errata on its low-speed APB bus that requires all
+    accesses be single-threaded, and certain I/O sequence rules are
+    observed.  This diff replaces the readl and writel macros used in
+    all APB devices with asm/cap_apb_io.h, which takes care of this.
+
+diff --git a/arch/arm64/include/asm/cap_apb_io.h b/arch/arm64/include/asm/cap_apb_io.h
+new file mode 100644
+index 00000000..36cd6e0
+--- /dev/null
++++ b/arch/arm64/include/asm/cap_apb_io.h
+@@ -0,0 +1,267 @@
++
++/*
++ * Based on arch/arm/include/asm/io.h
++ *
++ * Pensando Capri has an APB bus issue that requires all access to these
++ * perihperals be single-threadded.  Rather than intrusively modify the
++ * standard drivers, we guard readl/writel calls with a spinlock.  These
++ * are low-speed peripherals so, ugly as it is, it shouldn't be a performance
++ * concern.
++ */
++#ifndef __ASM_CAP_IO_H
++#define __ASM_CAP_IO_H
++// Prevent asm/io.h from conflicting
++#define __ASM_IO_H
++
++#ifdef __KERNEL__
++
++#ifndef CAP_APB_READBACK
++/*
++ * Capri APB devices have a side-effect-free readable register at offset 0xfc.
++ */
++#define CAP_APB_READBACK(a) (((a) & -0x100ULL) | 0xfc)
++#endif
++
++#include <linux/types.h>
++
++#include <asm/byteorder.h>
++#include <asm/barrier.h>
++#include <asm/memory.h>
++#include <asm/pgtable.h>
++#include <asm/early_ioremap.h>
++#include <asm/alternative.h>
++#include <asm/cpufeature.h>
++
++#include <xen/xen.h>
++
++#include <linux/spinlock.h>
++extern spinlock_t apb_bus_spinlock;
++
++#define APB_READ_BEGIN(addr) \
++	unsigned long flags; \
++	do { \
++		spin_lock_irqsave(&apb_bus_spinlock, flags); \
++	} while (0)
++
++#define APB_READ_END() \
++	do { \
++		mb(); \
++		spin_unlock_irqrestore(&apb_bus_spinlock, flags); \
++	} while (0)
++
++#define APB_WRITE_BEGIN(addr) \
++	volatile void __iomem *taddr = (void *)CAP_APB_READBACK((u64)addr); \
++	unsigned long flags; \
++	do { \
++		spin_lock_irqsave(&apb_bus_spinlock, flags); \
++	} while (0)
++
++#define APB_WRITE_END() \
++	do { \
++		uint32_t tmp; \
++		mb(); \
++		asm volatile(ALTERNATIVE("ldr %w0, [%1]", \
++					 "ldar %w0, [%1]", \
++					 ARM64_WORKAROUND_DEVICE_LOAD_ACQUIRE) \
++			     : "=r" (tmp) : "r" (taddr)); \
++		mb(); \
++		spin_unlock_irqrestore(&apb_bus_spinlock, flags); \
++	} while (0)
++
++/*
++ * Generic IO read/write.  These perform native-endian accesses.
++ */
++#define __raw_writeb __raw_writeb
++static inline void __raw_writeb(u8 val, volatile void __iomem *addr)
++{
++	APB_WRITE_BEGIN(addr);
++	asm volatile("strb %w0, [%1]" : : "rZ" (val), "r" (addr));
++	APB_WRITE_END();
++}
++
++#define __raw_writew __raw_writew
++static inline void __raw_writew(u16 val, volatile void __iomem *addr)
++{
++	APB_WRITE_BEGIN(addr);
++	asm volatile("strh %w0, [%1]" : : "rZ" (val), "r" (addr));
++	APB_WRITE_END();
++}
++
++#define __raw_writel __raw_writel
++static inline void __raw_writel(u32 val, volatile void __iomem *addr)
++{
++	APB_WRITE_BEGIN(addr);
++	asm volatile("str %w0, [%1]" : : "rZ" (val), "r" (addr));
++	APB_WRITE_END();
++}
++
++#define __raw_writeq __raw_writeq
++static inline void __raw_writeq(u64 val, volatile void __iomem *addr)
++{
++	APB_WRITE_BEGIN(addr);
++	asm volatile("str %x0, [%1]" : : "rZ" (val), "r" (addr));
++	APB_WRITE_END();
++}
++
++#define __raw_readb __raw_readb
++static inline u8 __raw_readb(const volatile void __iomem *addr)
++{
++	u8 val;
++	APB_READ_BEGIN(addr);
++	asm volatile(ALTERNATIVE("ldrb %w0, [%1]",
++				 "ldarb %w0, [%1]",
++				 ARM64_WORKAROUND_DEVICE_LOAD_ACQUIRE)
++		     : "=r" (val) : "r" (addr));
++	APB_READ_END();
++	return val;
++}
++
++#define __raw_readw __raw_readw
++static inline u16 __raw_readw(const volatile void __iomem *addr)
++{
++	u16 val;
++
++	APB_READ_BEGIN(addr);
++	asm volatile(ALTERNATIVE("ldrh %w0, [%1]",
++				 "ldarh %w0, [%1]",
++				 ARM64_WORKAROUND_DEVICE_LOAD_ACQUIRE)
++		     : "=r" (val) : "r" (addr));
++	APB_READ_END();
++	return val;
++}
++
++#define __raw_readl __raw_readl
++static inline u32 __raw_readl(const volatile void __iomem *addr)
++{
++	u32 val;
++	APB_READ_BEGIN(addr);
++	asm volatile(ALTERNATIVE("ldr %w0, [%1]",
++				 "ldar %w0, [%1]",
++				 ARM64_WORKAROUND_DEVICE_LOAD_ACQUIRE)
++		     : "=r" (val) : "r" (addr));
++	APB_READ_END();
++	return val;
++}
++
++#define __raw_readq __raw_readq
++static inline u64 __raw_readq(const volatile void __iomem *addr)
++{
++	u64 val;
++	APB_READ_BEGIN(addr);
++	asm volatile(ALTERNATIVE("ldr %0, [%1]",
++				 "ldar %0, [%1]",
++				 ARM64_WORKAROUND_DEVICE_LOAD_ACQUIRE)
++		     : "=r" (val) : "r" (addr));
++	APB_READ_END();
++	return val;
++}
++
++/* IO barriers */
++#define __iormb()		mb()
++#define __iowmb()		mb()
++
++#define mmiowb()		do { } while (0)
++
++/*
++ * Relaxed I/O memory access primitives. These follow the Device memory
++ * ordering rules but do not guarantee any ordering relative to Normal memory
++ * accesses.
++ */
++#define readb_relaxed(c)	({ u8  __r = __raw_readb(c); __r; })
++#define readw_relaxed(c)	({ u16 __r = le16_to_cpu((__force __le16)__raw_readw(c)); __r; })
++#define readl_relaxed(c)	({ u32 __r = le32_to_cpu((__force __le32)__raw_readl(c)); __r; })
++#define readq_relaxed(c)	({ u64 __r = le64_to_cpu((__force __le64)__raw_readq(c)); __r; })
++
++#define writeb_relaxed(v,c)	((void)__raw_writeb((v),(c)))
++#define writew_relaxed(v,c)	((void)__raw_writew((__force u16)cpu_to_le16(v),(c)))
++#define writel_relaxed(v,c)	((void)__raw_writel((__force u32)cpu_to_le32(v),(c)))
++#define writeq_relaxed(v,c)	((void)__raw_writeq((__force u64)cpu_to_le64(v),(c)))
++
++/*
++ * I/O memory access primitives. Reads are ordered relative to any
++ * following Normal memory access. Writes are ordered relative to any prior
++ * Normal memory access.
++ */
++#define readb(c)		({ u8  __v = readb_relaxed(c); __iormb(); __v; })
++#define readw(c)		({ u16 __v = readw_relaxed(c); __iormb(); __v; })
++#define readl(c)		({ u32 __v = readl_relaxed(c); __iormb(); __v; })
++#define readq(c)		({ u64 __v = readq_relaxed(c); __iormb(); __v; })
++
++#define writeb(v,c)		({ __iowmb(); writeb_relaxed((v),(c)); })
++#define writew(v,c)		({ __iowmb(); writew_relaxed((v),(c)); })
++#define writel(v,c)		({ __iowmb(); writel_relaxed((v),(c)); })
++#define writeq(v,c)		({ __iowmb(); writeq_relaxed((v),(c)); })
++
++/*
++ *  I/O port access primitives.
++ */
++#define arch_has_dev_port()	(1)
++#define IO_SPACE_LIMIT		(PCI_IO_SIZE - 1)
++#define PCI_IOBASE		((void __iomem *)PCI_IO_START)
++
++/*
++ * String version of I/O memory access operations.
++ */
++extern void __memcpy_fromio(void *, const volatile void __iomem *, size_t);
++extern void __memcpy_toio(volatile void __iomem *, const void *, size_t);
++extern void __memset_io(volatile void __iomem *, int, size_t);
++
++#define memset_io(c,v,l)	__memset_io((c),(v),(l))
++#define memcpy_fromio(a,c,l)	__memcpy_fromio((a),(c),(l))
++#define memcpy_toio(c,a,l)	__memcpy_toio((c),(a),(l))
++
++/*
++ * I/O memory mapping functions.
++ */
++extern void __iomem *__ioremap(phys_addr_t phys_addr, size_t size, pgprot_t prot);
++extern void __iounmap(volatile void __iomem *addr);
++extern void __iomem *ioremap_cache(phys_addr_t phys_addr, size_t size);
++
++#define ioremap(addr, size)		__ioremap((addr), (size), __pgprot(PROT_DEVICE_nGnRE))
++#define ioremap_nocache(addr, size)	__ioremap((addr), (size), __pgprot(PROT_DEVICE_nGnRE))
++#define ioremap_wc(addr, size)		__ioremap((addr), (size), __pgprot(PROT_NORMAL_NC))
++#define ioremap_wt(addr, size)		__ioremap((addr), (size), __pgprot(PROT_DEVICE_nGnRE))
++#define iounmap				__iounmap
++
++/*
++ * PCI configuration space mapping function.
++ *
++ * The PCI specification disallows posted write configuration transactions.
++ * Add an arch specific pci_remap_cfgspace() definition that is implemented
++ * through nGnRnE device memory attribute as recommended by the ARM v8
++ * Architecture reference manual Issue A.k B2.8.2 "Device memory".
++ */
++#define pci_remap_cfgspace(addr, size) __ioremap((addr), (size), __pgprot(PROT_DEVICE_nGnRnE))
++
++/*
++ * io{read,write}{16,32,64}be() macros
++ */
++#define ioread16be(p)		({ __u16 __v = be16_to_cpu((__force __be16)__raw_readw(p)); __iormb(); __v; })
++#define ioread32be(p)		({ __u32 __v = be32_to_cpu((__force __be32)__raw_readl(p)); __iormb(); __v; })
++#define ioread64be(p)		({ __u64 __v = be64_to_cpu((__force __be64)__raw_readq(p)); __iormb(); __v; })
++
++#define iowrite16be(v,p)	({ __iowmb(); __raw_writew((__force __u16)cpu_to_be16(v), p); })
++#define iowrite32be(v,p)	({ __iowmb(); __raw_writel((__force __u32)cpu_to_be32(v), p); })
++#define iowrite64be(v,p)	({ __iowmb(); __raw_writeq((__force __u64)cpu_to_be64(v), p); })
++
++#include <asm-generic/io.h>
++
++/*
++ * More restrictive address range checking than the default implementation
++ * (PHYS_OFFSET and PHYS_MASK taken into account).
++ */
++#define ARCH_HAS_VALID_PHYS_ADDR_RANGE
++extern int valid_phys_addr_range(phys_addr_t addr, size_t size);
++extern int valid_mmap_phys_addr_range(unsigned long pfn, size_t size);
++
++extern int devmem_is_allowed(unsigned long pfn);
++
++struct bio_vec;
++extern bool xen_biovec_phys_mergeable(const struct bio_vec *vec1,
++				      const struct bio_vec *vec2);
++#define BIOVEC_PHYS_MERGEABLE(vec1, vec2)				\
++	(__BIOVEC_PHYS_MERGEABLE(vec1, vec2) &&				\
++	 (!xen_domain() || xen_biovec_phys_mergeable(vec1, vec2)))
++
++#endif	/* __KERNEL__ */
++#endif	/* __ASM_CAP_IO_H */
+diff --git a/drivers/gpio/gpio-mmio.c b/drivers/gpio/gpio-mmio.c
+index f7da40e..9b74732 100644
+--- a/drivers/gpio/gpio-mmio.c
++++ b/drivers/gpio/gpio-mmio.c
+@@ -44,6 +44,9 @@ o        `                     ~~~~\___/~~~~    ` controller in FPGA is ,.`
+  *               `.......````.```
+  */
+ 
++#ifdef CONFIG_ARCH_PENSANDO_CAPRI_SOC
++#include <asm/cap_apb_io.h>
++#endif
+ #include <linux/init.h>
+ #include <linux/err.h>
+ #include <linux/bug.h>
+diff --git a/drivers/i2c/busses/i2c-designware-common.c b/drivers/i2c/busses/i2c-designware-common.c
+index d1a6937..9b57c06 100644
+--- a/drivers/i2c/busses/i2c-designware-common.c
++++ b/drivers/i2c/busses/i2c-designware-common.c
+@@ -21,6 +21,9 @@
+  * ----------------------------------------------------------------------------
+  *
+  */
++#ifdef CONFIG_ARCH_PENSANDO_CAPRI_SOC
++#include <asm/cap_apb_io.h>
++#endif
+ #include <linux/delay.h>
+ #include <linux/export.h>
+ #include <linux/errno.h>
+diff --git a/drivers/i2c/busses/i2c-designware-master.c b/drivers/i2c/busses/i2c-designware-master.c
+index 5d32e0f..012261e 100644
+--- a/drivers/i2c/busses/i2c-designware-master.c
++++ b/drivers/i2c/busses/i2c-designware-master.c
+@@ -21,6 +21,9 @@
+  * ----------------------------------------------------------------------------
+  *
+  */
++#ifdef CONFIG_ARCH_PENSANDO_CAPRI_SOC
++#include <asm/cap_apb_io.h>
++#endif
+ #include <linux/delay.h>
+ #include <linux/err.h>
+ #include <linux/errno.h>
+diff --git a/drivers/i2c/busses/i2c-designware-platdrv.c b/drivers/i2c/busses/i2c-designware-platdrv.c
+index 23ac762..04b1025 100644
+--- a/drivers/i2c/busses/i2c-designware-platdrv.c
++++ b/drivers/i2c/busses/i2c-designware-platdrv.c
+@@ -21,6 +21,9 @@
+  * ----------------------------------------------------------------------------
+  *
+  */
++#ifdef CONFIG_ARCH_PENSANDO_CAPRI_SOC
++#include <asm/cap_apb_io.h>
++#endif
+ #include <linux/acpi.h>
+ #include <linux/clk-provider.h>
+ #include <linux/clk.h>
+diff --git a/drivers/mtd/spi-nor/cadence-quadspi.c b/drivers/mtd/spi-nor/cadence-quadspi.c
+index 06420b7..d8f35df 100644
+--- a/drivers/mtd/spi-nor/cadence-quadspi.c
++++ b/drivers/mtd/spi-nor/cadence-quadspi.c
+@@ -15,6 +15,9 @@
+  * You should have received a copy of the GNU General Public License along with
+  * this program.  If not, see <http://www.gnu.org/licenses/>.
+  */
++#ifdef CONFIG_ARCH_PENSANDO_CAPRI_SOC
++#include <asm/cap_apb_io.h>
++#endif
+ #include <linux/clk.h>
+ #include <linux/completion.h>
+ #include <linux/delay.h>
+@@ -704,6 +707,27 @@ static int cqspi_indirect_write_setup(struct spi_nor *nor,
+ 	return 0;
+ }
+ 
++#ifdef CONFIG_ARCH_PENSANDO_CAPRI_SOC
++/*
++ * For Capri, avoid using iowrite32_rep, which will eventually call
++ * the __raw_writel from cap_apb_io.h.  This isn't appropriate for
++ * writing to the AHB area.
++ */
++#undef iowrite32_rep
++#define iowrite32_rep cap_ahb_write
++static inline void cap_ahb_write(volatile void __iomem *addr,
++				 const void *buffer,
++				 unsigned int count)
++{
++	volatile u32 __iomem *waddr = addr;
++	const u32 *buf = buffer;
++	while (count--) {
++		*waddr = *buf++;
++	}
++	mb();
++}
++#endif
++
+ static int cqspi_indirect_write_execute(struct spi_nor *nor,
+ 					const u8 *txbuf, const unsigned n_tx)
+ {
+diff --git a/drivers/soc/pensando/Makefile b/drivers/soc/pensando/Makefile
+index b9289e5..84b902c 100644
+--- a/drivers/soc/pensando/Makefile
++++ b/drivers/soc/pensando/Makefile
+@@ -1,6 +1,7 @@
+ #
+ # Capri SoC drivers
+ #
++obj-$(CONFIG_ARCH_PENSANDO_CAPRI_SOC) += cap_soc.o
+ obj-$(CONFIG_CAPRI_CAPMEM) += cap_mem.o
+ obj-$(CONFIG_CAPRI_PCIE) += cap_pcie.o cap_reboot.o
+ obj-$(CONFIG_CAPRI_CRASH) += cap_crash.o
+diff --git a/drivers/soc/pensando/cap_soc.c b/drivers/soc/pensando/cap_soc.c
+new file mode 100644
+index 00000000..f64b128
+--- /dev/null
++++ b/drivers/soc/pensando/cap_soc.c
+@@ -0,0 +1,11 @@
++
++/*
++ * Copyright (c) 2018, Pensando Systems Inc.
++ */
++
++#include <linux/spinlock.h>
++#include <linux/export.h>
++
++DEFINE_SPINLOCK(apb_bus_spinlock);
++EXPORT_SYMBOL_GPL(apb_bus_spinlock);
++
+diff --git a/drivers/spi/spi-capri.c b/drivers/spi/spi-capri.c
+index 0662d77..0591f3d 100644
+--- a/drivers/spi/spi-capri.c
++++ b/drivers/spi/spi-capri.c
+@@ -7,6 +7,9 @@
+  * Based on spi-dw.c
+  */
+ 
++#ifdef CONFIG_ARCH_PENSANDO_CAPRI_SOC
++#include <asm/cap_apb_io.h>
++#endif
+ #include <linux/clk.h>
+ #include <linux/err.h>
+ #include <linux/platform_device.h>
+@@ -14,7 +17,6 @@
+ #include <linux/module.h>
+ #include <linux/of.h>
+ #include <linux/of_platform.h>
+-#include <linux/io.h>
+ 
+ /* Register offsets */
+ #define DW_SPI_CTRL0			0x00
+diff --git a/drivers/tty/serial/8250/8250_early.c b/drivers/tty/serial/8250/8250_early.c
+index f135c18..6547d84 100644
+--- a/drivers/tty/serial/8250/8250_early.c
++++ b/drivers/tty/serial/8250/8250_early.c
+@@ -26,6 +26,9 @@
+  *	console=uart8250,mmio32,0xff5e0000,115200n8
+  */
+ 
++#ifdef CONFIG_ARCH_PENSANDO_CAPRI_SOC
++#include <asm/cap_apb_io.h>
++#endif
+ #include <linux/tty.h>
+ #include <linux/init.h>
+ #include <linux/console.h>
+diff --git a/drivers/tty/serial/8250/8250_port.c b/drivers/tty/serial/8250/8250_port.c
+index 8dcfd49..0ab5ca4 100644
+--- a/drivers/tty/serial/8250/8250_port.c
++++ b/drivers/tty/serial/8250/8250_port.c
+@@ -19,6 +19,9 @@
+ #define SUPPORT_SYSRQ
+ #endif
+ 
++#ifdef CONFIG_ARCH_PENSANDO_CAPRI_SOC
++#include <asm/cap_apb_io.h>
++#endif
+ #include <linux/module.h>
+ #include <linux/moduleparam.h>
+ #include <linux/ioport.h>
+diff --git a/drivers/watchdog/dw_wdt.c b/drivers/watchdog/dw_wdt.c
+index f494e00..6c41a3c 100644
+--- a/drivers/watchdog/dw_wdt.c
++++ b/drivers/watchdog/dw_wdt.c
+@@ -18,6 +18,9 @@
+ 
+ #define pr_fmt(fmt) KBUILD_MODNAME ": " fmt
+ 
++#ifdef CONFIG_ARCH_PENSANDO_CAPRI_SOC
++#include <asm/cap_apb_io.h>
++#endif
+ #include <linux/bitops.h>
+ #include <linux/clk.h>
+ #include <linux/delay.h>
