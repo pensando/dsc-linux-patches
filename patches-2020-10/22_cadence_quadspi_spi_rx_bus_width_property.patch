@@ -1,0 +1,85 @@
+From d1d461a2cd9cd30c0f43d96f4cc14409dad64918 Mon Sep 17 00:00:00 2001
+From: David Clear <dac2@pensando.io>
+Date: Thu, 22 Oct 2020 16:58:03 -0700
+Subject: [PATCH] mtd/spi-nor/cadence-quadspi.c: support spi-rx-bus-width
+ property on subnodes.
+
+This commit allows the width of the bus between the controller and the
+device to be specified in the device tree.
+---
+ drivers/mtd/spi-nor/cadence-quadspi.c | 17 ++++++++++++++---
+ 1 file changed, 14 insertions(+), 3 deletions(-)
+
+diff --git a/drivers/mtd/spi-nor/cadence-quadspi.c b/drivers/mtd/spi-nor/cadence-quadspi.c
+index 9c2a364..ad6807e 100644
+--- a/drivers/mtd/spi-nor/cadence-quadspi.c
++++ b/drivers/mtd/spi-nor/cadence-quadspi.c
+@@ -52,6 +52,7 @@ struct cqspi_st;
+ struct cqspi_flash_pdata {
+ 	struct spi_nor	nor;
+ 	struct cqspi_st	*cqspi;
++	struct spi_nor_hwcaps hwcaps;
+ 	u32		clk_rate;
+ 	u32		read_delay;
+ 	u32		tshsl_ns;
+@@ -1008,6 +1009,8 @@ static int cqspi_of_get_flash_pdata(struct platform_device *pdev,
+ 				    struct cqspi_flash_pdata *f_pdata,
+ 				    struct device_node *np)
+ {
++	u32 width;
++
+ 	if (of_property_read_u32(np, "cdns,read-delay", &f_pdata->read_delay)) {
+ 		dev_err(&pdev->dev, "couldn't determine read-delay\n");
+ 		return -ENXIO;
+@@ -1038,6 +1041,15 @@ static int cqspi_of_get_flash_pdata(struct platform_device *pdev,
+ 		return -ENXIO;
+ 	}
+ 
++	if (of_property_read_u32(np, "spi-rx-bus-width", &width) == 0) {
++		if (width < 8)
++			f_pdata->hwcaps.mask &= ~SNOR_HWCAPS_READ_1_1_8;
++		if (width < 4)
++			f_pdata->hwcaps.mask &= ~SNOR_HWCAPS_READ_1_1_4;
++		if (width < 2)
++			f_pdata->hwcaps.mask &= ~SNOR_HWCAPS_READ_1_1_2;
++	}
++
+ 	return 0;
+ }
+ 
+@@ -1099,7 +1111,6 @@ static int cqspi_setup_flash(struct cqspi_st *cqspi, struct device_node *np)
+ 	struct platform_device *pdev = cqspi->pdev;
+ 	struct device *dev = &pdev->dev;
+ 	const struct cqspi_driver_platdata *ddata;
+-	struct spi_nor_hwcaps hwcaps;
+ 	struct cqspi_flash_pdata *f_pdata;
+ 	struct spi_nor *nor;
+ 	struct mtd_info *mtd;
+@@ -1111,7 +1122,6 @@ static int cqspi_setup_flash(struct cqspi_st *cqspi, struct device_node *np)
+ 		dev_err(dev, "Couldn't find driver data\n");
+ 		return -EINVAL;
+ 	}
+-	hwcaps.mask = ddata->hwcaps_mask;
+ 
+ 	/* Get flash device data */
+ 	for_each_available_child_of_node(dev->of_node, np) {
+@@ -1130,6 +1140,7 @@ static int cqspi_setup_flash(struct cqspi_st *cqspi, struct device_node *np)
+ 		f_pdata = &cqspi->f_pdata[cs];
+ 		f_pdata->cqspi = cqspi;
+ 		f_pdata->cs = cs;
++		f_pdata->hwcaps.mask = ddata->hwcaps_mask;
+ 
+ 		ret = cqspi_of_get_flash_pdata(pdev, f_pdata, np);
+ 		if (ret)
+@@ -1159,7 +1170,7 @@ static int cqspi_setup_flash(struct cqspi_st *cqspi, struct device_node *np)
+ 			goto err;
+ 		}
+ 
+-		ret = spi_nor_scan(nor, NULL, &hwcaps);
++		ret = spi_nor_scan(nor, NULL, &f_pdata->hwcaps);
+ 		if (ret)
+ 			goto err;
+ 
+-- 
+2.7.4
+

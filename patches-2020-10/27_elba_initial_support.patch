@@ -1,0 +1,65 @@
+From 0a976fc09277be20573cadf7e43b4ac5fd83c913 Mon Sep 17 00:00:00 2001
+From: David Clear <dac2@pensando.io>
+Date: Thu, 22 Oct 2020 16:58:06 -0700
+Subject: [PATCH] arch/arm64: Pensando Elba SoC declaration.
+
+---
+ arch/arm64/Kconfig.platforms |  5 +++++
+ drivers/soc/Kconfig          |  1 +
+ drivers/soc/pensando/Kconfig | 16 ++++++++++++++++
+ 3 files changed, 22 insertions(+)
+ create mode 100644 drivers/soc/pensando/Kconfig
+
+diff --git a/arch/arm64/Kconfig.platforms b/arch/arm64/Kconfig.platforms
+index 6b54ee8..ac0b798 100644
+--- a/arch/arm64/Kconfig.platforms
++++ b/arch/arm64/Kconfig.platforms
+@@ -136,6 +136,11 @@ config ARCH_QCOM
+ 	help
+ 	  This enables support for the ARMv8 based Qualcomm chipsets.
+ 
++config ARCH_PENSANDO
++	bool "Pensando Platforms"
++	help
++	  This enables support for the ARMv8 based Pensando chipsets
++
+ config ARCH_REALTEK
+ 	bool "Realtek Platforms"
+ 	help
+diff --git a/drivers/soc/Kconfig b/drivers/soc/Kconfig
+index fc9e980..f3e6390 100644
+--- a/drivers/soc/Kconfig
++++ b/drivers/soc/Kconfig
+@@ -7,6 +7,7 @@ source "drivers/soc/bcm/Kconfig"
+ source "drivers/soc/fsl/Kconfig"
+ source "drivers/soc/imx/Kconfig"
+ source "drivers/soc/mediatek/Kconfig"
++source "drivers/soc/pensando/Kconfig"
+ source "drivers/soc/qcom/Kconfig"
+ source "drivers/soc/renesas/Kconfig"
+ source "drivers/soc/rockchip/Kconfig"
+diff --git a/drivers/soc/pensando/Kconfig b/drivers/soc/pensando/Kconfig
+new file mode 100644
+index 00000000..f84751c
+--- /dev/null
++++ b/drivers/soc/pensando/Kconfig
+@@ -0,0 +1,16 @@
++if ARCH_PENSANDO
++
++menu "Pensando SoC drivers"
++
++choice
++    prompt "SoC Select"
++    default ARCH_PENSANDO_ELBA_SOC
++
++config ARCH_PENSANDO_ELBA_SOC
++	bool "Elba SoC"
++	help
++	  Support for the Pensando Elba SoC
++
++endchoice
++
++endif
+-- 
+2.7.4
+
