@@ -1,0 +1,37 @@
+From 896595af2c4236deb8bf3d757197875fcef6265b Mon Sep 17 00:00:00 2001
+From: David Clear <dac2@pensando.io>
+Date: Thu, 22 Oct 2020 16:58:02 -0700
+Subject: [PATCH] revert 159a8b4 as struct_size() is not available in 4.14.18.
+
+The 159a8b4 was a prerequisite to cleanly apply other sdhci-cadence.c patches.
+With those patches applied, we can revert this one.
+---
+ drivers/mmc/host/sdhci-cadence.c | 5 +++--
+ 1 file changed, 3 insertions(+), 2 deletions(-)
+
+diff --git a/drivers/mmc/host/sdhci-cadence.c b/drivers/mmc/host/sdhci-cadence.c
+index 1803baa..8b289a4 100644
+--- a/drivers/mmc/host/sdhci-cadence.c
++++ b/drivers/mmc/host/sdhci-cadence.c
+@@ -361,6 +361,7 @@ static int sdhci_cdns_probe(struct platform_device *pdev)
+ 	struct sdhci_pltfm_host *pltfm_host;
+ 	struct sdhci_cdns_priv *priv;
+ 	struct clk *clk;
++	size_t priv_size;
+ 	unsigned int nr_phy_params;
+ 	int ret;
+ 	struct device *dev = &pdev->dev;
+@@ -378,8 +379,8 @@ static int sdhci_cdns_probe(struct platform_device *pdev)
+ 		data = &sdhci_cdns_pltfm_data;
+ 
+ 	nr_phy_params = sdhci_cdns_phy_param_count(dev->of_node);
+-	host = sdhci_pltfm_init(pdev, data,
+-				struct_size(priv, phy_params, nr_phy_params));
++	priv_size = sizeof(*priv) + sizeof(priv->phy_params[0]) * nr_phy_params;
++	host = sdhci_pltfm_init(pdev, &sdhci_cdns_pltfm_data, priv_size);
+ 	if (IS_ERR(host)) {
+ 		ret = PTR_ERR(host);
+ 		goto disable_clk;
+-- 
+2.7.4
+

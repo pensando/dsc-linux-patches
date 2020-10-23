@@ -1,0 +1,464 @@
+From f37e004e76a8c5c08a05403385974eb8f48b58f7 Mon Sep 17 00:00:00 2001
+From: David Clear <dac2@pensando.io>
+Date: Thu, 22 Oct 2020 16:58:07 -0700
+Subject: [PATCH] drivers/mmc/host: Pensando Elba support in the Cadence
+ EMMC host controller
+
+---
+ drivers/mmc/host/Kconfig              |  13 +++
+ drivers/mmc/host/Makefile             |   1 +
+ drivers/mmc/host/sdhci-cadence-elba.c | 193 ++++++++++++++++++++++++++++++++++
+ drivers/mmc/host/sdhci-cadence.c      |  66 ++++++------
+ drivers/mmc/host/sdhci-cadence.h      |  57 ++++++++++
+ 5 files changed, 294 insertions(+), 36 deletions(-)
+ create mode 100644 drivers/mmc/host/sdhci-cadence-elba.c
+ create mode 100644 drivers/mmc/host/sdhci-cadence.h
+
+diff --git a/drivers/mmc/host/Kconfig b/drivers/mmc/host/Kconfig
+index 8c15637..2048167 100644
+--- a/drivers/mmc/host/Kconfig
++++ b/drivers/mmc/host/Kconfig
+@@ -185,6 +185,19 @@ config MMC_SDHCI_CADENCE
+ 
+ 	  If unsure, say N.
+ 
++config MMC_SDHCI_CADENCE_ELBA
++	tristate "SDHCI support for the Pensando/Cadence SD/SDIO/eMMC controller"
++	depends on ARCH_PENSANDO_ELBA_SOC
++	depends on MMC_SDHCI
++	depends on OF
++        depends on MMC_SDHCI_CADENCE
++	depends on MMC_SDHCI_PLTFM
++        select MMC_SDHCI_IO_ACCESSORS
++	help
++	  This selects the Pensando/Cadence SD/SDIO/eMMC controller.
++	  If you have a controller with this interface, say Y or M here.
++	  If unsure, say N.
++
+ config MMC_SDHCI_CNS3XXX
+ 	tristate "SDHCI support on the Cavium Networks CNS3xxx SoC"
+ 	depends on ARCH_CNS3XXX
+diff --git a/drivers/mmc/host/Makefile b/drivers/mmc/host/Makefile
+index 7c7b29f..d00e7f1 100644
+--- a/drivers/mmc/host/Makefile
++++ b/drivers/mmc/host/Makefile
+@@ -76,6 +76,7 @@ obj-$(CONFIG_MMC_REALTEK_USB)	+= rtsx_usb_sdmmc.o
+ 
+ obj-$(CONFIG_MMC_SDHCI_PLTFM)		+= sdhci-pltfm.o
+ obj-$(CONFIG_MMC_SDHCI_CADENCE)		+= sdhci-cadence.o
++obj-$(CONFIG_MMC_SDHCI_CADENCE_ELBA)	+= sdhci-cadence-elba.o
+ obj-$(CONFIG_MMC_SDHCI_CNS3XXX)		+= sdhci-cns3xxx.o
+ obj-$(CONFIG_MMC_SDHCI_ESDHC_IMX)	+= sdhci-esdhc-imx.o
+ obj-$(CONFIG_MMC_SDHCI_DOVE)		+= sdhci-dove.o
+diff --git a/drivers/mmc/host/sdhci-cadence-elba.c b/drivers/mmc/host/sdhci-cadence-elba.c
+new file mode 100644
+index 00000000..6fea128
+--- /dev/null
++++ b/drivers/mmc/host/sdhci-cadence-elba.c
+@@ -0,0 +1,193 @@
++/*
++ * Copyright (C) 2020 Pensando Systems, Inc.
++ *
++ * This program is free software; you can redistribute it and/or modify
++ * it under the terms of the GNU General Public License as published by
++ * the Free Software Foundation; either version 2 of the License, or
++ * (at your option) any later version.
++ *
++ * This program is distributed in the hope that it will be useful,
++ * but WITHOUT ANY WARRANTY; without even the implied warranty of
++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++ * GNU General Public License for more details.
++ */
++
++#include <linux/bitops.h>
++#include <linux/iopoll.h>
++#include <linux/module.h>
++#include <linux/mmc/host.h>
++#include <linux/mmc/mmc.h>
++#include <linux/of.h>
++#include "sdhci-pltfm.h"
++#include "sdhci-cadence.h"
++
++// delay regs address
++#define SDIO_REG_HRS0		0x00
++#define SDIO_REG_HRS4		0x10
++#define SDIO_REG_HRS6		0x18
++#define SDIO_REG_CRS63		0xfc
++#define SDIO_REG_HRS44		0xb0
++#define REG_DELAY_HS		0x00
++#define REG_DELAY_DEFAULT	0x01
++#define REG_DELAY_UHSI_SDR12	0x02
++#define REG_DELAY_UHSI_SDR25	0x03
++#define REG_DELAY_UHSI_SDR50	0x04
++#define REG_DELAY_UHSI_DDR50	0x05
++#define REG_DELAY_MMC_LEGACY	0x06
++#define REG_DELAY_MMC_SDR	0x07
++#define REG_DELAY_MMC_DDR	0x08
++
++static u32 elba_read_l(struct sdhci_host *host, int reg)
++{
++	struct sdhci_cdns_priv *priv = sdhci_cdns_priv(host);
++
++	writel(0x0, priv->ctl_addr + 0x44);
++	return readl(host->ioaddr + reg);
++}
++
++static u16 elba_read_w(struct sdhci_host *host, int reg)
++{
++	struct sdhci_cdns_priv *priv = sdhci_cdns_priv(host);
++
++	writel(0x0, priv->ctl_addr + 0x44);
++	return readw(host->ioaddr + reg);
++}
++
++static u8 elba_read_b(struct sdhci_host *host, int reg)
++{
++	struct sdhci_cdns_priv *priv = sdhci_cdns_priv(host);
++
++	writel(0x0, priv->ctl_addr + 0x44);
++	return readb(host->ioaddr + reg);
++}
++
++static void elba_write_l(struct sdhci_host *host, u32 val, int reg)
++{
++	struct sdhci_cdns_priv *priv = sdhci_cdns_priv(host);
++
++	writel(0x78, priv->ctl_addr + 0x44);
++	writel(val, host->ioaddr + reg);
++}
++
++static void elba_write_w(struct sdhci_host *host, u16 val, int reg)
++{
++	struct sdhci_cdns_priv *priv = sdhci_cdns_priv(host);
++	u32 m = (reg & 0x3);
++	u32 msk = (0x3 << (m));
++
++	writel(msk << 3, priv->ctl_addr + 0x44);
++	writew(val, host->ioaddr + reg);
++	writel(0x78, priv->ctl_addr + 0x44);
++}
++
++static void elba_write_b(struct sdhci_host *host, u8 val, int reg)
++{
++	struct sdhci_cdns_priv *priv = sdhci_cdns_priv(host);
++	u32 m = (reg & 0x3);
++	u32 msk = (0x1 << (m));
++
++	writel(msk << 3, priv->ctl_addr + 0x44);
++	writeb(val, host->ioaddr + reg);
++	writel(0x78, priv->ctl_addr + 0x44);
++}
++
++static const struct sdhci_ops sdhci_elba_ops = {
++	.read_l = elba_read_l,
++	.read_w = elba_read_w,
++	.read_b = elba_read_b,
++	.write_l = elba_write_l,
++	.write_w = elba_write_w,
++	.write_b = elba_write_b,
++	.set_clock = sdhci_set_clock,
++	.get_timeout_clock = sdhci_cdns_get_timeout_clock,
++	.set_bus_width = sdhci_set_bus_width,
++	.reset = sdhci_reset,
++	.set_uhs_signaling = sdhci_cdns_set_uhs_signaling,
++};
++
++static void sd3_set_dlyvr(struct sdhci_host *host, uint8_t slot_nr,
++			  unsigned char addr, unsigned char data)
++{
++	unsigned long dlyrv_reg;
++
++	dlyrv_reg = ((unsigned long)data << 8);
++	dlyrv_reg |= addr;
++
++	// set data and address
++	writel(dlyrv_reg, host->ioaddr + SDIO_REG_HRS44 + slot_nr * 4);
++	dlyrv_reg |= (1uL << 24uL);
++	// send write request
++	writel(dlyrv_reg, host->ioaddr + SDIO_REG_HRS44 + slot_nr * 4);
++	dlyrv_reg &= ~(1uL << 24);
++	// clear write request
++	writel(dlyrv_reg, host->ioaddr + SDIO_REG_HRS44 + slot_nr * 4);
++}
++
++static void sd4_set_dlyvr(struct sdhci_host *host,
++			  unsigned char addr, unsigned char data)
++{
++	unsigned long dlyrv_reg;
++
++	dlyrv_reg = ((unsigned long)data << 8);
++	dlyrv_reg |= addr;
++
++	// set data and address
++	writel(dlyrv_reg, host->ioaddr + SDIO_REG_HRS4);
++	dlyrv_reg |= (1uL << 24uL);
++	// send write request
++	writel(dlyrv_reg, host->ioaddr + SDIO_REG_HRS4);
++	dlyrv_reg &= ~(1uL << 24);
++	// clear write request
++	writel(dlyrv_reg, host->ioaddr + SDIO_REG_HRS4);
++}
++
++#define CRS63_GET_SPEC_VERSION(val)	(((val >> 16) & 0xff) + 1)
++static void phy_config(struct sdhci_host *host)
++{
++	int tmp = readl(host->ioaddr + SDIO_REG_CRS63);
++	int host_version = CRS63_GET_SPEC_VERSION(tmp);
++
++	if (host_version > 3) {
++		sd4_set_dlyvr(host, REG_DELAY_DEFAULT, 0x04);
++		sd4_set_dlyvr(host, REG_DELAY_HS, 0x04);
++		sd4_set_dlyvr(host, REG_DELAY_UHSI_SDR50, 0x06);
++		sd4_set_dlyvr(host, REG_DELAY_UHSI_DDR50, 0x16);
++	} else {
++		int i;
++		for (i = 0; i < 1; i++) {
++			sd3_set_dlyvr(host, i, REG_DELAY_DEFAULT, 0x04);
++			sd3_set_dlyvr(host, i, REG_DELAY_HS, 0x04);
++			sd3_set_dlyvr(host, i, REG_DELAY_UHSI_SDR50, 0x00);
++			sd3_set_dlyvr(host, i, REG_DELAY_MMC_LEGACY, 0x01);
++			sd3_set_dlyvr(host, i, REG_DELAY_MMC_SDR, 0x01);
++		}
++	}
++}
++
++static int elba_drv_init(struct platform_device *pdev)
++{
++	struct sdhci_host *host = platform_get_drvdata(pdev);
++	struct sdhci_cdns_priv *priv = sdhci_cdns_priv(host);
++	struct resource *iomem;
++	void __iomem *ioaddr;
++
++	host->mmc->caps |= (MMC_CAP_1_8V_DDR | MMC_CAP_8_BIT_DATA);
++	phy_config(host);
++	iomem = platform_get_resource(pdev, IORESOURCE_MEM, 1);
++	if (!iomem)
++		return -ENOMEM;
++	ioaddr = devm_ioremap_resource(&pdev->dev, iomem);
++	if (IS_ERR(ioaddr))
++		return PTR_ERR(ioaddr);
++	priv->ctl_addr = ioaddr;
++	return 0;
++}
++
++const struct sdhci_cdns_drv_data sdhci_elba_drv_data = {
++	.init = elba_drv_init,
++	.pltfm_data = {
++		.ops = &sdhci_elba_ops,
++		.quirks = SDHCI_QUIRK_BROKEN_TIMEOUT_VAL,
++	},
++	.no_retune = 1,
++};
+diff --git a/drivers/mmc/host/sdhci-cadence.c b/drivers/mmc/host/sdhci-cadence.c
+index 8b289a4..299691a 100644
+--- a/drivers/mmc/host/sdhci-cadence.c
++++ b/drivers/mmc/host/sdhci-cadence.c
+@@ -23,6 +23,7 @@
+ #include <linux/of_device.h>
+ 
+ #include "sdhci-pltfm.h"
++#include "sdhci-cadence.h"
+ 
+ /* HRS - Host Register Set (specific to Cadence) */
+ #define SDHCI_CDNS_HRS04		0x10		/* PHY access port */
+@@ -68,23 +69,6 @@
+  */
+ #define SDHCI_CDNS_MAX_TUNING_LOOP	40
+ 
+-struct sdhci_cdns_phy_param {
+-	u8 addr;
+-	u8 data;
+-};
+-
+-struct sdhci_cdns_priv {
+-	void __iomem *hrs_addr;
+-	bool enhanced_strobe;
+-	unsigned int nr_phy_params;
+-	struct sdhci_cdns_phy_param phy_params[0];
+-};
+-
+-struct sdhci_cdns_phy_cfg {
+-	const char *property;
+-	u8 addr;
+-};
+-
+ static const struct sdhci_cdns_phy_cfg sdhci_cdns_phy_cfgs[] = {
+ 	{ "cdns,phy-input-delay-sd-highspeed", SDHCI_CDNS_PHY_DLY_SD_HS, },
+ 	{ "cdns,phy-input-delay-legacy", SDHCI_CDNS_PHY_DLY_SD_DEFAULT, },
+@@ -176,14 +160,7 @@ static int sdhci_cdns_phy_init(struct sdhci_cdns_priv *priv)
+ 	return 0;
+ }
+ 
+-static void *sdhci_cdns_priv(struct sdhci_host *host)
+-{
+-	struct sdhci_pltfm_host *pltfm_host = sdhci_priv(host);
+-
+-	return sdhci_pltfm_priv(pltfm_host);
+-}
+-
+-static unsigned int sdhci_cdns_get_timeout_clock(struct sdhci_host *host)
++unsigned int sdhci_cdns_get_timeout_clock(struct sdhci_host *host)
+ {
+ 	/*
+ 	 * Cadence's spec says the Timeout Clock Frequency is the same as the
+@@ -211,7 +188,7 @@ static u32 sdhci_cdns_get_emmc_mode(struct sdhci_cdns_priv *priv)
+ 	return FIELD_GET(SDHCI_CDNS_HRS06_MODE, tmp);
+ }
+ 
+-static void sdhci_cdns_set_uhs_signaling(struct sdhci_host *host,
++void sdhci_cdns_set_uhs_signaling(struct sdhci_host *host,
+ 					 unsigned int timing)
+ {
+ 	struct sdhci_cdns_priv *priv = sdhci_cdns_priv(host);
+@@ -253,13 +230,17 @@ static const struct sdhci_ops sdhci_cdns_ops = {
+ 	.set_uhs_signaling = sdhci_cdns_set_uhs_signaling,
+ };
+ 
+-static const struct sdhci_pltfm_data sdhci_cdns_uniphier_pltfm_data = {
+-	.ops = &sdhci_cdns_ops,
+-	.quirks2 = SDHCI_QUIRK2_PRESET_VALUE_BROKEN,
++static const struct sdhci_cdns_drv_data sdhci_cdns_uniphier_drv_data = {
++	.pltfm_data = {
++		.ops = &sdhci_cdns_ops,
++		.quirks2 = SDHCI_QUIRK2_PRESET_VALUE_BROKEN,
++	},
+ };
+ 
+-static const struct sdhci_pltfm_data sdhci_cdns_pltfm_data = {
+-	.ops = &sdhci_cdns_ops,
++static const struct sdhci_cdns_drv_data sdhci_cdns_drv_data = {
++	.pltfm_data = {
++		.ops = &sdhci_cdns_ops,
++	},
+ };
+ 
+ static int sdhci_cdns_set_tune_val(struct sdhci_host *host, unsigned int val)
+@@ -356,8 +337,8 @@ static void sdhci_cdns_hs400_enhanced_strobe(struct mmc_host *mmc,
+ 
+ static int sdhci_cdns_probe(struct platform_device *pdev)
+ {
++	const struct sdhci_cdns_drv_data *data;
+ 	struct sdhci_host *host;
+-	const struct sdhci_pltfm_data *data;
+ 	struct sdhci_pltfm_host *pltfm_host;
+ 	struct sdhci_cdns_priv *priv;
+ 	struct clk *clk;
+@@ -376,11 +357,11 @@ static int sdhci_cdns_probe(struct platform_device *pdev)
+ 
+ 	data = of_device_get_match_data(dev);
+ 	if (!data)
+-		data = &sdhci_cdns_pltfm_data;
++		data = &sdhci_cdns_drv_data;
+ 
+ 	nr_phy_params = sdhci_cdns_phy_param_count(dev->of_node);
+ 	priv_size = sizeof(*priv) + sizeof(priv->phy_params[0]) * nr_phy_params;
+-	host = sdhci_pltfm_init(pdev, &sdhci_cdns_pltfm_data, priv_size);
++	host = sdhci_pltfm_init(pdev, &data->pltfm_data, priv_size);
+ 	if (IS_ERR(host)) {
+ 		ret = PTR_ERR(host);
+ 		goto disable_clk;
+@@ -394,7 +375,8 @@ static int sdhci_cdns_probe(struct platform_device *pdev)
+ 	priv->hrs_addr = host->ioaddr;
+ 	priv->enhanced_strobe = false;
+ 	host->ioaddr += SDHCI_CDNS_SRS_BASE;
+-	host->mmc_host_ops.execute_tuning = sdhci_cdns_execute_tuning;
++	if (!data->no_retune)
++		host->mmc_host_ops.execute_tuning = sdhci_cdns_execute_tuning;
+ 	host->mmc_host_ops.hs400_enhanced_strobe =
+ 				sdhci_cdns_hs400_enhanced_strobe;
+ 
+@@ -410,6 +392,12 @@ static int sdhci_cdns_probe(struct platform_device *pdev)
+ 	if (ret)
+ 		goto free;
+ 
++	if (data->init) {
++		ret = data->init(pdev);
++		if (ret)
++			goto free;
++	}
++
+ 	ret = sdhci_add_host(host);
+ 	if (ret)
+ 		goto free;
+@@ -459,8 +447,14 @@ static const struct dev_pm_ops sdhci_cdns_pm_ops = {
+ static const struct of_device_id sdhci_cdns_match[] = {
+ 	{
+ 		.compatible = "socionext,uniphier-sd4hc",
+-		.data = &sdhci_cdns_uniphier_pltfm_data,
++		.data = &sdhci_cdns_uniphier_drv_data,
+ 	},
++#ifdef CONFIG_MMC_SDHCI_CADENCE_ELBA
++	{
++		.compatible = "pensando,elba-emmc",
++		.data = &sdhci_elba_drv_data
++	},
++#endif
+ 	{ .compatible = "cdns,sd4hc" },
+ 	{ /* sentinel */ }
+ };
+diff --git a/drivers/mmc/host/sdhci-cadence.h b/drivers/mmc/host/sdhci-cadence.h
+new file mode 100644
+index 00000000..4f52efa
+--- /dev/null
++++ b/drivers/mmc/host/sdhci-cadence.h
+@@ -0,0 +1,57 @@
++/*
++ * Copyright (C) 2016 Socionext Inc.
++ *   Author: Masahiro Yamada <yamada.masahiro@socionext.com>
++ *
++ * This program is free software; you can redistribute it and/or modify
++ * it under the terms of the GNU General Public License as published by
++ * the Free Software Foundation; either version 2 of the License, or
++ * (at your option) any later version.
++ *
++ * This program is distributed in the hope that it will be useful,
++ * but WITHOUT ANY WARRANTY; without even the implied warranty of
++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++ * GNU General Public License for more details.
++ */
++
++#ifndef _SDHCI_CADENCE_H_
++#define _SDHCI_CADENCE_H_
++
++struct sdhci_cdns_phy_param {
++	u8 addr;
++	u8 data;
++};
++
++struct sdhci_cdns_priv {
++	void __iomem *hrs_addr;
++	void __iomem *ctl_addr;
++	bool enhanced_strobe;
++	unsigned int nr_phy_params;
++	struct sdhci_cdns_phy_param phy_params[0];
++};
++
++struct sdhci_cdns_phy_cfg {
++	const char *property;
++	u8 addr;
++};
++
++struct sdhci_cdns_drv_data {
++	int (*init)(struct platform_device *pdev);
++	const struct sdhci_pltfm_data pltfm_data;
++	int no_retune;
++};
++
++static inline void *sdhci_cdns_priv(struct sdhci_host *host)
++{
++	struct sdhci_pltfm_host *pltfm_host = sdhci_priv(host);
++
++	return sdhci_pltfm_priv(pltfm_host);
++}
++
++#ifdef CONFIG_MMC_SDHCI_CADENCE_ELBA
++extern const struct sdhci_cdns_drv_data sdhci_elba_drv_data;
++#endif
++
++unsigned int sdhci_cdns_get_timeout_clock(struct sdhci_host *host);
++void sdhci_cdns_set_uhs_signaling(struct sdhci_host *host, unsigned int timing);
++
++#endif
+-- 
+2.7.4
+

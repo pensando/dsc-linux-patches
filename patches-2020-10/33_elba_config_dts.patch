@@ -1,0 +1,970 @@
+From 4f23d1b9c1cab242aff11492825841ae528b10fc Mon Sep 17 00:00:00 2001
+From: David Clear <dac2@pensando.io>
+Date: Thu, 22 Oct 2020 16:58:08 -0700
+Subject: [PATCH] arch/arm64: Pensando elba dts and config files
+
+---
+ arch/arm64/boot/dts/Makefile                       |   1 +
+ arch/arm64/boot/dts/pensando/Makefile              |   6 +
+ arch/arm64/boot/dts/pensando/elba-16core.dtsi      | 170 +++++++++++++
+ arch/arm64/boot/dts/pensando/elba-asic-common.dtsi | 108 +++++++++
+ arch/arm64/boot/dts/pensando/elba-asic.dts         |   7 +
+ arch/arm64/boot/dts/pensando/elba-flash-parts.dtsi |  64 +++++
+ arch/arm64/boot/dts/pensando/elba.dtsi             | 265 ++++++++++++++++++++
+ arch/arm64/configs/elba_defconfig                  | 270 +++++++++++++++++++++
+ 8 files changed, 891 insertions(+)
+ create mode 100644 arch/arm64/boot/dts/pensando/Makefile
+ create mode 100644 arch/arm64/boot/dts/pensando/elba-16core.dtsi
+ create mode 100644 arch/arm64/boot/dts/pensando/elba-asic-common.dtsi
+ create mode 100644 arch/arm64/boot/dts/pensando/elba-asic.dts
+ create mode 100644 arch/arm64/boot/dts/pensando/elba-flash-parts.dtsi
+ create mode 100644 arch/arm64/boot/dts/pensando/elba.dtsi
+ create mode 100644 arch/arm64/configs/elba_defconfig
+
+diff --git a/arch/arm64/boot/dts/Makefile b/arch/arm64/boot/dts/Makefile
+index c6684ab..86a3e83 100644
+--- a/arch/arm64/boot/dts/Makefile
++++ b/arch/arm64/boot/dts/Makefile
+@@ -15,6 +15,7 @@ dts-dirs += hisilicon
+ dts-dirs += marvell
+ dts-dirs += mediatek
+ dts-dirs += nvidia
++dts-dirs += pensando
+ dts-dirs += qcom
+ dts-dirs += realtek
+ dts-dirs += renesas
+diff --git a/arch/arm64/boot/dts/pensando/Makefile b/arch/arm64/boot/dts/pensando/Makefile
+new file mode 100644
+index 00000000..6897af3c
+--- /dev/null
++++ b/arch/arm64/boot/dts/pensando/Makefile
+@@ -0,0 +1,6 @@
++# SPDX-License-Identifier: GPL-2.0
++dtb-$(CONFIG_ARCH_PENSANDO_ELBA_SOC) += elba-asic.dtb
++
++always		:= $(dtb-y)
++subdir-y	:= $(dts-dirs)
++clean-files	:= *.dtb
+diff --git a/arch/arm64/boot/dts/pensando/elba-16core.dtsi b/arch/arm64/boot/dts/pensando/elba-16core.dtsi
+new file mode 100644
+index 00000000..59187d2
+--- /dev/null
++++ b/arch/arm64/boot/dts/pensando/elba-16core.dtsi
+@@ -0,0 +1,170 @@
++
++/ {
++	cpus {
++		#address-cells = <2>;
++		#size-cells = <0>;
++
++		cpu-map {
++			cluster0 {
++				core0 { cpu = <&cpu0>; };
++				core1 { cpu = <&cpu1>; };
++				core2 { cpu = <&cpu2>; };
++				core3 { cpu = <&cpu3>; };
++			};
++			cluster1 {
++				core0 { cpu = <&cpu4>; };
++				core1 { cpu = <&cpu5>; };
++				core2 { cpu = <&cpu6>; };
++				core3 { cpu = <&cpu7>; };
++			};
++			cluster2 {
++				core0 { cpu = <&cpu8>; };
++				core1 { cpu = <&cpu9>; };
++				core2 { cpu = <&cpu10>; };
++				core3 { cpu = <&cpu11>; };
++			};
++			cluster3 {
++				core0 { cpu = <&cpu12>; };
++				core1 { cpu = <&cpu13>; };
++				core2 { cpu = <&cpu14>; };
++				core3 { cpu = <&cpu15>; };
++			};
++		};
++
++		// CLUSTER 0
++		cpu0: cpu@0 {
++			device_type = "cpu";
++			compatible = "arm,cortex-a72", "arm,armv8";
++			reg = <0 0x0>;
++			enable-method = "spin-table";
++			next-level-cache = <&l2_0>;
++		};
++		cpu1: cpu@1 {
++			device_type = "cpu";
++			compatible = "arm,cortex-a72", "arm,armv8";
++			reg = <0 0x1>;
++			enable-method = "spin-table";
++			next-level-cache = <&l2_0>;
++		};
++		cpu2: cpu@2 {
++			device_type = "cpu";
++			compatible = "arm,cortex-a72", "arm,armv8";
++			reg = <0 0x2>;
++			enable-method = "spin-table";
++			next-level-cache = <&l2_0>;
++		};
++		cpu3: cpu@3 {
++			device_type = "cpu";
++			compatible = "arm,cortex-a72", "arm,armv8";
++			reg = <0 0x3>;
++			enable-method = "spin-table";
++			next-level-cache = <&l2_0>;
++		};
++
++		l2_0: l2-cache0 {
++			compatible = "cache";
++		};
++
++		// CLUSTER 1
++		cpu4: cpu@100 {
++			device_type = "cpu";
++			compatible = "arm,cortex-a72", "arm,armv8";
++			reg = <0 0x100>;
++			enable-method = "spin-table";
++			next-level-cache = <&l2_1>;
++		};
++		cpu5: cpu@101 {
++			device_type = "cpu";
++			compatible = "arm,cortex-a72", "arm,armv8";
++			reg = <0 0x101>;
++			enable-method = "spin-table";
++			next-level-cache = <&l2_1>;
++		};
++		cpu6: cpu@102 {
++			device_type = "cpu";
++			compatible = "arm,cortex-a72", "arm,armv8";
++			reg = <0 0x102>;
++			enable-method = "spin-table";
++			next-level-cache = <&l2_1>;
++		};
++		cpu7: cpu@103 {
++			device_type = "cpu";
++			compatible = "arm,cortex-a72", "arm,armv8";
++			reg = <0 0x103>;
++			enable-method = "spin-table";
++			next-level-cache = <&l2_1>;
++		};
++
++		l2_1: l2-cache1 {
++			compatible = "cache";
++		};
++
++		// CLUSTER 2
++		cpu8: cpu@200 {
++			device_type = "cpu";
++			compatible = "arm,cortex-a72", "arm,armv8";
++			reg = <0 0x200>;
++			enable-method = "spin-table";
++			next-level-cache = <&l2_2>;
++		};
++		cpu9: cpu@201 {
++			device_type = "cpu";
++			compatible = "arm,cortex-a72", "arm,armv8";
++			reg = <0 0x201>;
++			enable-method = "spin-table";
++			next-level-cache = <&l2_2>;
++		};
++		cpu10: cpu@202 {
++			device_type = "cpu";
++			compatible = "arm,cortex-a72", "arm,armv8";
++			reg = <0 0x202>;
++			enable-method = "spin-table";
++			next-level-cache = <&l2_2>;
++		};
++		cpu11: cpu@203 {
++			device_type = "cpu";
++			compatible = "arm,cortex-a72", "arm,armv8";
++			reg = <0 0x203>;
++			enable-method = "spin-table";
++			next-level-cache = <&l2_2>;
++		};
++
++		l2_2: l2-cache2 {
++			compatible = "cache";
++		};
++
++		// CLUSTER 3
++		cpu12: cpu@300 {
++			device_type = "cpu";
++			compatible = "arm,cortex-a72", "arm,armv8";
++			reg = <0 0x300>;
++			enable-method = "spin-table";
++			next-level-cache = <&l2_3>;
++		};
++		cpu13: cpu@301 {
++			device_type = "cpu";
++			compatible = "arm,cortex-a72", "arm,armv8";
++			reg = <0 0x301>;
++			enable-method = "spin-table";
++			next-level-cache = <&l2_3>;
++		};
++		cpu14: cpu@302 {
++			device_type = "cpu";
++			compatible = "arm,cortex-a72", "arm,armv8";
++			reg = <0 0x302>;
++			enable-method = "spin-table";
++			next-level-cache = <&l2_3>;
++		};
++		cpu15: cpu@303 {
++			device_type = "cpu";
++			compatible = "arm,cortex-a72", "arm,armv8";
++			reg = <0 0x303>;
++			enable-method = "spin-table";
++			next-level-cache = <&l2_3>;
++		};
++
++		l2_3: l2-cache3 {
++			compatible = "cache";
++		};
++	};
++};
+diff --git a/arch/arm64/boot/dts/pensando/elba-asic-common.dtsi b/arch/arm64/boot/dts/pensando/elba-asic-common.dtsi
+new file mode 100644
+index 00000000..c51b4d4
+--- /dev/null
++++ b/arch/arm64/boot/dts/pensando/elba-asic-common.dtsi
+@@ -0,0 +1,108 @@
++
++/ {
++	model = "Elba ASIC Board";
++
++	aliases {
++		serial0 = &uart0;
++	};
++
++	chosen {
++		stdout-path = "serial0:19200n8";
++	};
++};
++
++&ahb_clk {
++	clock-frequency = <400000000>;
++};
++
++&emmc_clk {
++	clock-frequency = <200000000>;
++};
++
++&flash_clk {
++	clock-frequency = <400000000>;
++};
++
++&ref_clk {
++	clock-frequency = <156250000>;
++};
++
++&qspi {
++	status = "okay";
++	flash0: mt25q@0 {
++		compatile = "jdec,spi-nor";
++		reg = <0>;
++		spi-max-frequency = <40000000>;
++		spi-rx-bus-width = <2>;
++		m25p,fast-read;
++		cdns,read-delay = <0>;
++		cdns,tshsl-ns = <0>;
++		cdns,tsd2d-ns = <0>;
++		cdns,tchsh-ns = <0>;
++		cdns,tslch-ns = <0>;
++	};
++};
++
++&gpio0 {
++	status = "ok";
++};
++
++&emmc {
++	bus-width = <8>;
++	status = "ok";
++};
++
++&wdt0 {
++	status = "okay";
++};
++
++&i2c0 {
++	clock-frequency = <100000>;
++	status = "okay";
++	tmp451@4c {
++		compatible = "ti,tmp451";
++		reg = <0x4c>;
++	};
++	tps53659@62 {
++		compatible = "ti,tps53659";
++		reg = <0x62>;
++	};
++	pcf85263@51 {
++		compatible = "nxp,pcf85263";
++		reg = <0x51>;
++	};
++};
++
++&ssi0 {
++	num-cs = <4>;
++	cs-gpios = <&spics 0 0>, <&spics 1 0>, <&porta 1 0>, <&porta 7 0>;
++	status = "okay";
++	cpld@0 {
++		compatible = "pensando,cpld";
++		#address-cells = <1>;
++		#size-cells = <1>;
++		spi-max-frequency = <12000000>;
++		reg = <0>;
++	};
++	cpld@1 {
++		compatible = "pensando,cpld";
++		#address-cells = <1>;
++		#size-cells = <1>;
++		spi-max-frequency = <12000000>;
++		reg = <1>;
++	};
++	cpld@2 {
++		compatible = "pensando,cpld";
++		#address-cells = <1>;
++		#size-cells = <1>;
++		spi-max-frequency = <12000000>;
++		reg = <2>;
++	};
++	cpld@3 {
++		compatible = "pensando,cpld";
++		#address-cells = <1>;
++		#size-cells = <1>;
++		spi-max-frequency = <12000000>;
++		reg = <3>;
++	};
++};
+diff --git a/arch/arm64/boot/dts/pensando/elba-asic.dts b/arch/arm64/boot/dts/pensando/elba-asic.dts
+new file mode 100644
+index 00000000..d074b1f
+--- /dev/null
++++ b/arch/arm64/boot/dts/pensando/elba-asic.dts
+@@ -0,0 +1,7 @@
++
++/dts-v1/;
++
++#include "elba.dtsi"
++#include "elba-16core.dtsi"
++#include "elba-asic-common.dtsi"
++#include "elba-flash-parts.dtsi"
+diff --git a/arch/arm64/boot/dts/pensando/elba-flash-parts.dtsi b/arch/arm64/boot/dts/pensando/elba-flash-parts.dtsi
+new file mode 100644
+index 00000000..e58c81a
+--- /dev/null
++++ b/arch/arm64/boot/dts/pensando/elba-flash-parts.dtsi
+@@ -0,0 +1,64 @@
++&flash0 {
++	partitions {
++		compatible = "fixed-partitions";
++		#address-cells = <1>;
++		#size-cells = <1>;
++		partition@0 {
++			label = "flash";
++			reg = <0x00010000 0x0fff0000>;
++		};
++		partition@100000 {
++			label = "boot0";
++			reg = <0x00100000 0x00080000>;
++		};
++		partition@180000 {
++			label = "golduboot";
++			reg = <0x00180000 0x00200000>;
++		};
++		partition@400000 {
++			label = "goldfw";
++			reg = <0x00400000 0x03c00000>;
++		};
++		partition@4010000 {
++			label = "fwmap";
++			reg = <0x04010000 0x00020000>;
++		};
++		partition@4030000 {
++			label = "fwsel";
++			reg = <0x04030000 0x00020000>;
++		};
++		partition@4090000 {
++			label = "bootlog";
++			reg = <0x04090000 0x00020000>;
++		};
++		partition@40b0000 {
++			label = "panicbuf";
++			reg = <0x040b0000 0x00020000>;
++		};
++		partition@4200000 {
++			label = "uboota";
++			reg = <0x04200000 0x00400000>;
++		};
++		partition@4600000 {
++			label = "ubootb";
++			reg = <0x04600000 0x00400000>;
++		};
++		partition@4a00000 {
++			label = "mainfwa";
++			reg = <0x04a00000 0x01000000>;
++		};
++		partition@5a00000 {
++			label = "mainfwb";
++			reg = <0x05a00000 0x01000000>;
++		};
++		partition@8000000 {
++			label = "diagfw";
++			reg = <0x08000000 0x07fe0000>;
++		};
++	};
++};
++
++&panic {
++	status = "okay";
++	reg = <0x0 0x740b0000 0x0 0x00020000>;
++};
+diff --git a/arch/arm64/boot/dts/pensando/elba.dtsi b/arch/arm64/boot/dts/pensando/elba.dtsi
+new file mode 100644
+index 00000000..8e243bc
+--- /dev/null
++++ b/arch/arm64/boot/dts/pensando/elba.dtsi
+@@ -0,0 +1,265 @@
++
++/*
++ * Copyright (c) 2019, Pensando Systems Inc.
++ * This program is free software; you can redistribute it and/or modify
++ * it under the terms of the GNU General Public License version 2 as
++ * published by the Free Software Foundation.
++ */
++
++#include "dt-bindings/interrupt-controller/arm-gic.h"
++
++/ {
++	compatible = "pensando,elba";
++
++	interrupt-parent = <&gic>;
++	#address-cells = <2>;
++	#size-cells = <2>;
++
++	clocks {
++		ahb_clk: oscillator0 {
++			compatible = "fixed-clock";
++			#clock-cells = <0>;
++		};
++		emmc_clk: oscillator2 {
++			compatible = "fixed-clock";
++			#clock-cells = <0>;
++		};
++		flash_clk: oscillator3 {
++			compatible = "fixed-clock";
++			#clock-cells = <0>;
++		};
++		ref_clk: oscillator4 {
++			compatible = "fixed-clock";
++			#clock-cells = <0>;
++		};
++	};
++
++	timer {
++		compatible = "arm,armv8-timer";
++		interrupts = <GIC_PPI 13 (GIC_CPU_MASK_SIMPLE(1) |
++					IRQ_TYPE_LEVEL_LOW)>,
++			     <GIC_PPI 14 (GIC_CPU_MASK_SIMPLE(1) |
++					IRQ_TYPE_LEVEL_LOW)>,
++			     <GIC_PPI 11 (GIC_CPU_MASK_SIMPLE(1) |
++					IRQ_TYPE_LEVEL_LOW)>,
++			     <GIC_PPI 10 (GIC_CPU_MASK_SIMPLE(1) |
++					IRQ_TYPE_LEVEL_LOW)>;
++	};
++
++	pmu {
++		compatible = "arm,cortex-a72-pmu";
++		interrupts = <GIC_PPI 7 (GIC_CPU_MASK_SIMPLE(1) |
++				IRQ_TYPE_LEVEL_LOW)>;
++	};
++
++	soc {
++		compatible = "simple-bus";
++		#address-cells = <2>;
++		#size-cells = <2>;
++		ranges;
++
++		gic: interrupt-controller@800000 {
++			compatible = "arm,gic-v3";
++			#interrupt-cells = <3>;
++			#address-cells = <2>;
++			#size-cells = <2>;
++			ranges;
++			interrupt-controller;
++			reg = <0x0 0x800000 0x0 0x200000>,	// GICD
++			      <0x0 0xa00000 0x0 0x200000>;	// GICR
++			interrupts = <GIC_PPI 9 IRQ_TYPE_LEVEL_HIGH>;
++
++			its: interrupt-controller@820000 {
++				compatible = "arm,gic-v3-its";
++				msi-controller;
++				#msi-cells = <1>;
++				reg = <0x0 0x820000 0x0 0x10000>;
++				socionext,synquacer-pre-its =
++							<0xc00000 0x1000000>;
++			};
++		};
++
++		uart0: serial@4800 {
++			device_type = "serial";
++			compatible = "ns16550a";
++			reg = <0x0 0x4800 0x0 0x100>;
++			clocks = <&ref_clk>;
++			interrupts = <GIC_SPI 2 IRQ_TYPE_LEVEL_HIGH>;
++			reg-shift = <2>;
++			reg-io-width = <4>;
++		};
++
++		qspi: quadspi@2400 {
++			compatible = "pensando,cdns-qspi";
++			#address-cells = <1>;
++			#size-cells = <0>;
++			reg = <0x0 0x2400 0x0 0x400>,
++			      <0x0 0x7fff0000 0x0 0x1000>;
++			interrupts = <GIC_SPI 0 IRQ_TYPE_LEVEL_HIGH>;
++			clocks = <&flash_clk>;
++			cdns,fifo-depth = <1024>;
++			cdns,fifo-width = <4>;
++			cdns,trigger-address = <0x7fff0000>;
++			status = "disabled";
++		};
++
++		gpio0: gpio@4000 {
++			#address-cells = <1>;
++			#size-cells = <0>;
++			compatible = "snps,dw-apb-gpio";
++			reg = <0x0 0x4000 0x0 0x78>;
++			status = "disabled";
++
++			porta: gpio-controller@0 {
++				compatible = "snps,dw-apb-gpio-port";
++				gpio-controller;
++				#gpio-cells = <2>;
++				snps,nr-gpios = <8>;
++				reg = <0>;
++			};
++			portb: gpio-controller@1 {
++				compatible = "snps,dw-apb-gpio-port";
++				gpio-controller;
++				#gpio-cells = <2>;
++				snps,nr-gpios = <8>;
++				reg = <1>;
++			};
++		};
++
++		i2c0: i2c@400 {
++			compatible = "snps,designware-i2c";
++			reg = <0x0 0x400 0x0 0x100>;
++			clocks = <&ahb_clk>;
++			#address-cells = <1>;
++			#size-cells = <0>;
++			i2c-sda-hold-time-ns = <480>;
++			snps,sda-timeout-ms = <750>;
++			interrupts = <GIC_SPI 4 IRQ_TYPE_LEVEL_HIGH>;
++			status = "disabled";
++		};
++
++		mnet0: mnet0 {
++			compatible = "pensando,mnet";
++			msi-parent = <&its 0x0>;
++		};
++		mnet1: mnet1 {
++			compatible = "pensando,mnet";
++			msi-parent = <&its 0x1>;
++		};
++		mnet2: mnet2 {
++			compatible = "pensando,mnet";
++			msi-parent = <&its 0x2>;
++		};
++		mnet3: mnet3 {
++			compatible = "pensando,mnet";
++			msi-parent = <&its 0x3>;
++		};
++		mnet4: mnet4 {
++			compatible = "pensando,mnet";
++			msi-parent = <&its 0x4>;
++		};
++		mnet5: mnet5 {
++			compatible = "pensando,mnet";
++			msi-parent = <&its 0x5>;
++		};
++		mnet6: mnet6 {
++			compatible = "pensando,mnet";
++			msi-parent = <&its 0x6>;
++		};
++		mnet7: mnet7 {
++			compatible = "pensando,mnet";
++			msi-parent = <&its 0x7>;
++		};
++		mnet8: mnet8 {
++			compatible = "pensando,mnet";
++			msi-parent = <&its 0x8>;
++		};
++
++		spics: spics@307c2468 {
++			compatible = "pensando,elba-spics";
++			reg = <0x0 0x307c2468 0x0 0x4>;
++			gpio-controller;
++			#gpio-cells = <2>;
++		};
++
++		ssi0: ssi@2800 {
++			compatible = "snps,dw-apb-ssi";
++			reg = <0x0 0x2800 0x0 0x100>;
++			clocks = <&ahb_clk>;
++			interrupts = <GIC_SPI 9 IRQ_TYPE_LEVEL_HIGH>;
++			#address-cells = <1>;
++			#size-cells = <0>;
++			num-cs = <2>;
++			cs-gpios = <&spics 0 0>, <&spics 1 0>;
++			status = "disabled";
++		};
++		ssi1: ssi@2c00 {
++			compatible = "snps,dw-apb-ssi";
++			reg = <0x0 0x2c00 0x0 0x100>;
++			clocks = <&ahb_clk>;
++			interrupts = <GIC_SPI 8 IRQ_TYPE_LEVEL_HIGH>;
++			#address-cells = <1>;
++			#size-cells = <0>;
++			num-cs = <2>;
++			cs-gpios = <&spics 2 0>, <&spics 3 0>;
++			status = "disabled";
++		};
++
++		wdt0: watchdog@1400 {
++			compatible = "snps,dw-wdt";
++			reg = <0x0 0x1400 0x0 0x100>;
++			clocks = <&ahb_clk>;
++			interrupts = <GIC_SPI 10 IRQ_TYPE_LEVEL_HIGH>;
++			snps,reset-pulse-len = <256>;
++			status = "disabled";
++		};
++		wdt1: watchdog@1800 {
++			compatible = "snps,dw-wdt";
++			reg = <0x0 0x1800 0x0 0x100>;
++			clocks = <&ahb_clk>;
++			interrupts = <GIC_SPI 11 IRQ_TYPE_LEVEL_HIGH>;
++			snps,reset-pulse-len = <256>;
++			status = "disabled";
++		};
++		wdt2: watchdog@1c00 {
++			compatible = "snps,dw-wdt";
++			reg = <0x0 0x1c00 0x0 0x100>;
++			clocks = <&ahb_clk>;
++			interrupts = <GIC_SPI 12 IRQ_TYPE_LEVEL_HIGH>;
++			snps,reset-pulse-len = <256>;
++			status = "disabled";
++		};
++		wdt3: watchdog@2000 {
++			compatible = "snps,dw-wdt";
++			reg = <0x0 0x2000 0x0 0x100>;
++			clocks = <&ahb_clk>;
++			interrupts = <GIC_SPI 13 IRQ_TYPE_LEVEL_HIGH>;
++			snps,reset-pulse-len = <256>;
++			status = "disabled";
++		};
++
++		emmc: sdio-host-chip@30440000 {
++			compatible = "pensando,elba-emmc";
++			clocks = <&emmc_clk>;
++			interrupts = <GIC_SPI 26 IRQ_TYPE_LEVEL_HIGH>;
++			reg = <0x0 0x30440000 0x0 0x10000
++			       0x0 0x30480000 0x0 0x1000>;
++			cdns,phy-input-delay-sd-highspeed = <0x4>;
++			cdns,phy-input-delay-legacy = <0x4>;
++			cdns,phy-input-delay-sd-uhs-sdr50 = <0x6>;
++			cdns,phy-input-delay-sd-uhs-ddr50 = <0x16>;
++			cdns,mmc-ddr-1_8v;
++			status = "disabled";
++		} ;
++
++		panic: panicdump {
++			compatible = "pensando,capri-crash";
++			status = "disabled";
++		};
++
++		bsm {
++			compatible = "pensando,bsm";
++			reg = <0x0 0x307c2080 0x0 0x4>;
++		};
++	};
++};
+diff --git a/arch/arm64/configs/elba_defconfig b/arch/arm64/configs/elba_defconfig
+new file mode 100644
+index 00000000..3fec738
+--- /dev/null
++++ b/arch/arm64/configs/elba_defconfig
+@@ -0,0 +1,270 @@
++CONFIG_DEFAULT_HOSTNAME="elba"
++# CONFIG_SWAP is not set
++CONFIG_SYSVIPC=y
++CONFIG_POSIX_MQUEUE=y
++CONFIG_AUDIT=y
++CONFIG_GENERIC_IRQ_DEBUGFS=y
++CONFIG_NO_HZ_IDLE=y
++CONFIG_HIGH_RES_TIMERS=y
++CONFIG_LOG_BUF_SHIFT=14
++CONFIG_MEMCG=y
++CONFIG_BLK_CGROUP=y
++CONFIG_CGROUP_PIDS=y
++CONFIG_CGROUP_HUGETLB=y
++CONFIG_CPUSETS=y
++CONFIG_CGROUP_DEVICE=y
++CONFIG_CGROUP_CPUACCT=y
++CONFIG_CGROUP_PERF=y
++CONFIG_NAMESPACES=y
++CONFIG_USER_NS=y
++CONFIG_SCHED_AUTOGROUP=y
++CONFIG_KALLSYMS_ALL=y
++CONFIG_EMBEDDED=y
++# CONFIG_COMPAT_BRK is not set
++CONFIG_PROFILING=y
++CONFIG_JUMP_LABEL=y
++CONFIG_MODULES=y
++CONFIG_MODULE_UNLOAD=y
++CONFIG_BLK_DEV_BSGLIB=y
++CONFIG_BLK_DEV_INTEGRITY=y
++# CONFIG_IOSCHED_DEADLINE is not set
++CONFIG_ARCH_PENSANDO=y
++CONFIG_PCI=y
++# CONFIG_ARM64_ERRATUM_826319 is not set
++# CONFIG_ARM64_ERRATUM_827319 is not set
++# CONFIG_ARM64_ERRATUM_824069 is not set
++# CONFIG_ARM64_ERRATUM_819472 is not set
++# CONFIG_ARM64_ERRATUM_832075 is not set
++# CONFIG_ARM64_ERRATUM_845719 is not set
++# CONFIG_ARM64_ERRATUM_843419 is not set
++# CONFIG_CAVIUM_ERRATUM_22375 is not set
++# CONFIG_CAVIUM_ERRATUM_23154 is not set
++# CONFIG_CAVIUM_ERRATUM_27456 is not set
++# CONFIG_CAVIUM_ERRATUM_30115 is not set
++# CONFIG_QCOM_FALKOR_ERRATUM_1003 is not set
++# CONFIG_QCOM_FALKOR_ERRATUM_1009 is not set
++# CONFIG_QCOM_QDF2400_ERRATUM_0065 is not set
++CONFIG_SCHED_MC=y
++CONFIG_HOTPLUG_CPU=y
++CONFIG_PREEMPT_VOLUNTARY=y
++# CONFIG_BOUNCE is not set
++CONFIG_KSM=y
++CONFIG_SECCOMP=y
++CONFIG_CRASH_DUMP=y
++# CONFIG_ARM64_HW_AFDBM is not set
++# CONFIG_ARM64_PAN is not set
++# CONFIG_ARM64_VHE is not set
++# CONFIG_ARM64_UAO is not set
++CONFIG_RANDOMIZE_BASE=y
++# CONFIG_EFI is not set
++CONFIG_COMPAT=y
++# CONFIG_SUSPEND is not set
++CONFIG_CPU_IDLE=y
++CONFIG_NET=y
++CONFIG_PACKET=y
++CONFIG_UNIX=y
++CONFIG_XFRM_USER=y
++CONFIG_NET_KEY=y
++CONFIG_INET=y
++CONFIG_IP_MULTICAST=y
++CONFIG_IP_ADVANCED_ROUTER=y
++CONFIG_IP_MULTIPLE_TABLES=y
++CONFIG_IP_ROUTE_MULTIPATH=y
++CONFIG_IP_PNP=y
++CONFIG_IP_PNP_DHCP=y
++CONFIG_IP_PNP_BOOTP=y
++CONFIG_SYN_COOKIES=y
++CONFIG_INET_AH=y
++CONFIG_INET_ESP=y
++CONFIG_INET_IPCOMP=y
++CONFIG_TCP_MD5SIG=y
++# CONFIG_IPV6 is not set
++CONFIG_NETFILTER=y
++CONFIG_NETFILTER_XT_TARGET_DSCP=y
++CONFIG_NETFILTER_XT_MATCH_DSCP=y
++CONFIG_NETFILTER_XT_MATCH_POLICY=y
++CONFIG_NETFILTER_XT_MATCH_PKTTYPE=y
++CONFIG_IP_NF_IPTABLES=y
++CONFIG_IP_NF_MATCH_AH=y
++CONFIG_IP_NF_MATCH_ECN=y
++CONFIG_IP_NF_MATCH_TTL=y
++CONFIG_IP_NF_FILTER=y
++CONFIG_IP_NF_TARGET_REJECT=y
++CONFIG_IP_NF_MANGLE=y
++CONFIG_IP_NF_TARGET_ECN=y
++CONFIG_IP_NF_TARGET_TTL=y
++CONFIG_VLAN_8021Q=y
++CONFIG_BPF_JIT=y
++CONFIG_NET_PKTGEN=y
++# CONFIG_WIRELESS is not set
++CONFIG_UEVENT_HELPER_PATH="/sbin/hotplug"
++CONFIG_DEVTMPFS=y
++CONFIG_DEVTMPFS_MOUNT=y
++# CONFIG_PREVENT_FIRMWARE_BUILD is not set
++CONFIG_MTD=y
++CONFIG_MTD_M25P80=y
++CONFIG_MTD_SPI_NOR=y
++# CONFIG_MTD_SPI_NOR_USE_4K_SECTORS is not set
++CONFIG_SPI_CADENCE_QUADSPI=y
++CONFIG_BLK_DEV_LOOP=y
++CONFIG_EEPROM_AT24=y
++CONFIG_EEPROM_AT25=y
++CONFIG_NETDEVICES=y
++CONFIG_BONDING=y
++CONFIG_TUN=y
++# CONFIG_NET_VENDOR_3COM is not set
++# CONFIG_NET_VENDOR_ADAPTEC is not set
++# CONFIG_NET_VENDOR_AGERE is not set
++# CONFIG_NET_VENDOR_ALACRITECH is not set
++# CONFIG_NET_VENDOR_ALTEON is not set
++# CONFIG_NET_VENDOR_AMAZON is not set
++# CONFIG_NET_VENDOR_AMD is not set
++# CONFIG_NET_VENDOR_AQUANTIA is not set
++# CONFIG_NET_VENDOR_ARC is not set
++# CONFIG_NET_VENDOR_ATHEROS is not set
++# CONFIG_NET_CADENCE is not set
++# CONFIG_NET_VENDOR_BROADCOM is not set
++# CONFIG_NET_VENDOR_BROCADE is not set
++# CONFIG_NET_VENDOR_CAVIUM is not set
++# CONFIG_NET_VENDOR_CHELSIO is not set
++# CONFIG_NET_VENDOR_CISCO is not set
++# CONFIG_NET_VENDOR_DEC is not set
++# CONFIG_NET_VENDOR_DLINK is not set
++# CONFIG_NET_VENDOR_EMULEX is not set
++# CONFIG_NET_VENDOR_EZCHIP is not set
++# CONFIG_NET_VENDOR_EXAR is not set
++# CONFIG_NET_VENDOR_HISILICON is not set
++# CONFIG_NET_VENDOR_HP is not set
++# CONFIG_NET_VENDOR_HUAWEI is not set
++# CONFIG_NET_VENDOR_INTEL is not set
++# CONFIG_NET_VENDOR_MARVELL is not set
++# CONFIG_NET_VENDOR_MELLANOX is not set
++# CONFIG_NET_VENDOR_MICREL is not set
++# CONFIG_NET_VENDOR_MICROCHIP is not set
++# CONFIG_NET_VENDOR_MYRI is not set
++# CONFIG_NET_VENDOR_NATSEMI is not set
++# CONFIG_NET_VENDOR_NETRONOME is not set
++# CONFIG_NET_VENDOR_NVIDIA is not set
++# CONFIG_NET_VENDOR_OKI is not set
++# CONFIG_NET_PACKET_ENGINE is not set
++# CONFIG_NET_VENDOR_QLOGIC is not set
++# CONFIG_NET_VENDOR_QUALCOMM is not set
++# CONFIG_NET_VENDOR_REALTEK is not set
++# CONFIG_NET_VENDOR_RENESAS is not set
++# CONFIG_NET_VENDOR_RDC is not set
++# CONFIG_NET_VENDOR_ROCKER is not set
++# CONFIG_NET_VENDOR_SAMSUNG is not set
++# CONFIG_NET_VENDOR_SEEQ is not set
++# CONFIG_NET_VENDOR_SILAN is not set
++# CONFIG_NET_VENDOR_SIS is not set
++# CONFIG_NET_VENDOR_SOLARFLARE is not set
++# CONFIG_NET_VENDOR_SMSC is not set
++# CONFIG_NET_VENDOR_STMICRO is not set
++# CONFIG_NET_VENDOR_SUN is not set
++# CONFIG_NET_VENDOR_TEHUTI is not set
++# CONFIG_NET_VENDOR_TI is not set
++# CONFIG_NET_VENDOR_VIA is not set
++# CONFIG_NET_VENDOR_WIZNET is not set
++# CONFIG_NET_VENDOR_SYNOPSYS is not set
++CONFIG_MDIO_DEVICE=y
++# CONFIG_WLAN is not set
++# CONFIG_INPUT_KEYBOARD is not set
++# CONFIG_INPUT_MOUSE is not set
++# CONFIG_SERIO is not set
++CONFIG_VT_HW_CONSOLE_BINDING=y
++CONFIG_LEGACY_PTY_COUNT=16
++CONFIG_SERIAL_8250=y
++CONFIG_SERIAL_8250_CONSOLE=y
++# CONFIG_SERIAL_8250_PCI is not set
++CONFIG_SERIAL_OF_PLATFORM=y
++# CONFIG_HW_RANDOM is not set
++# CONFIG_DEVPORT is not set
++CONFIG_I2C=y
++CONFIG_I2C_CHARDEV=y
++CONFIG_I2C_DESIGNWARE_PLATFORM=y
++CONFIG_SPI=y
++CONFIG_SPI_DESIGNWARE=y
++CONFIG_SPI_DW_MMIO=y
++CONFIG_SPI_SPIDEV=y
++CONFIG_GPIOLIB=y
++CONFIG_GPIO_DWAPB=y
++CONFIG_GPIO_ELBA_SPICS=y
++CONFIG_SENSORS_LM90=y
++CONFIG_PMBUS=y
++CONFIG_SENSORS_TPS53659=y
++CONFIG_THERMAL=y
++# CONFIG_THERMAL_OF is not set
++CONFIG_WATCHDOG=y
++CONFIG_SOFT_WATCHDOG=y
++CONFIG_DW_WATCHDOG=y
++CONFIG_MFD_SYSCON=y
++# CONFIG_RC_CORE is not set
++# CONFIG_VGA_ARB is not set
++# CONFIG_HID is not set
++# CONFIG_USB_SUPPORT is not set
++CONFIG_MMC=y
++CONFIG_MMC_DEBUG=y
++CONFIG_MMC_SDHCI=y
++CONFIG_MMC_SDHCI_PLTFM=y
++CONFIG_MMC_SDHCI_CADENCE=y
++CONFIG_MMC_SDHCI_CADENCE_ELBA=y
++CONFIG_RTC_CLASS=y
++CONFIG_RTC_DRV_PCF85363=y
++CONFIG_SYNC_FILE=y
++CONFIG_UIO=y
++CONFIG_CHROME_PLATFORMS=y
++CONFIG_COMMON_CLK_VERSATILE=y
++CONFIG_CLK_SP810=y
++CONFIG_COMMON_CLK_CS2000_CP=y
++CONFIG_CLK_QORIQ=y
++# CONFIG_FSL_ERRATUM_A008585 is not set
++# CONFIG_HISILICON_ERRATUM_161010101 is not set
++# CONFIG_ARM64_ERRATUM_858921 is not set
++# CONFIG_IOMMU_SUPPORT is not set
++CONFIG_PENSANDO_SOC_BSM_ENABLE=y
++CONFIG_EXTCON=y
++CONFIG_GENERIC_PHY=y
++CONFIG_EXT3_FS=y
++CONFIG_EXT4_FS_POSIX_ACL=y
++CONFIG_FANOTIFY=y
++CONFIG_FANOTIFY_ACCESS_PERMISSIONS=y
++CONFIG_OVERLAY_FS=y
++CONFIG_TMPFS=y
++CONFIG_HUGETLBFS=y
++CONFIG_CONFIGFS_FS=y
++CONFIG_SQUASHFS=y
++# CONFIG_NETWORK_FILESYSTEMS is not set
++CONFIG_NLS=y
++CONFIG_NLS_CODEPAGE_437=y
++CONFIG_NLS_ISO8859_1=y
++CONFIG_PRINTK_TIME=y
++CONFIG_MESSAGE_LOGLEVEL_DEFAULT=7
++CONFIG_DYNAMIC_DEBUG=y
++CONFIG_DEBUG_INFO=y
++# CONFIG_SCHED_DEBUG is not set
++# CONFIG_RCU_TRACE is not set
++CONFIG_FUNCTION_TRACER=y
++CONFIG_IRQSOFF_TRACER=y
++CONFIG_SCHED_TRACER=y
++CONFIG_FTRACE_SYSCALLS=y
++CONFIG_BLK_DEV_IO_TRACE=y
++CONFIG_MEMTEST=y
++CONFIG_KEYS=y
++CONFIG_SECURITY=y
++CONFIG_CRYPTO_LZO=y
++CONFIG_CRYPTO_ANSI_CPRNG=y
++# CONFIG_CRYPTO_HW is not set
++CONFIG_ARM64_CRYPTO=y
++CONFIG_CRYPTO_SHA512_ARM64=y
++CONFIG_CRYPTO_SHA1_ARM64_CE=y
++CONFIG_CRYPTO_SHA2_ARM64_CE=y
++CONFIG_CRYPTO_GHASH_ARM64_CE=y
++CONFIG_CRYPTO_CRCT10DIF_ARM64_CE=y
++CONFIG_CRYPTO_CRC32_ARM64_CE=y
++CONFIG_CRYPTO_AES_ARM64_CE_CCM=y
++CONFIG_CRYPTO_AES_ARM64_CE_BLK=y
++CONFIG_CRYPTO_CHACHA20_NEON=y
++CONFIG_CRYPTO_AES_ARM64_BS=y
++CONFIG_CRC_ITU_T=y
++CONFIG_CRC7=y
++CONFIG_LIBCRC32C=y
+-- 
+2.7.4
+

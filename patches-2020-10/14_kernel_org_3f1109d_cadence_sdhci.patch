@@ -1,0 +1,41 @@
+From 3f1109d1324405eaeb6c4a586084bd1d933d8b19 Mon Sep 17 00:00:00 2001
+From: "Gustavo A. R. Silva" <gustavo@embeddedor.com>
+Date: Thu, 19 Apr 2018 10:59:58 -0500
+Subject: [PATCH] mmc: sdhci-cadence: fix logically and structurally dead code
+
+Currently, the code block inside the for loop will never execute more than
+once, because the function returns immediately after the first iteration,
+hence the execution of the code at the second iteration is structurally
+dead and, code at line 281: return 0; is never reached.
+
+Fix this by checking _ret_ before return.
+
+Addresses-Coverity-ID: 1468009 ("Logically dead code")
+Addresses-Coverity-ID: 1468002 ("Structurally dead code")
+Suggested-by: Masahiro Yamada <yamada.masahiro@socionext.com>
+Signed-off-by: Gustavo A. R. Silva <gustavo@embeddedor.com>
+Acked-by: Masahiro Yamada <yamada.masahiro@socionext.com>
+Acked-by: Adrian Hunter <adrian.hunter@intel.com>
+Signed-off-by: Ulf Hansson <ulf.hansson@linaro.org>
+---
+ drivers/mmc/host/sdhci-cadence.c | 4 ++--
+ 1 file changed, 2 insertions(+), 2 deletions(-)
+
+diff --git a/drivers/mmc/host/sdhci-cadence.c b/drivers/mmc/host/sdhci-cadence.c
+index bc30d16..7a343b8 100644
+--- a/drivers/mmc/host/sdhci-cadence.c
++++ b/drivers/mmc/host/sdhci-cadence.c
+@@ -274,8 +274,8 @@ static int sdhci_cdns_set_tune_val(struct sdhci_host *host, unsigned int val)
+ 		ret = readl_poll_timeout(reg, tmp,
+ 					 !(tmp & SDHCI_CDNS_HRS06_TUNE_UP),
+ 					 0, 1);
+-
+-		return ret;
++		if (ret)
++			return ret;
+ 	}
+ 
+ 	return 0;
+-- 
+2.7.4
+

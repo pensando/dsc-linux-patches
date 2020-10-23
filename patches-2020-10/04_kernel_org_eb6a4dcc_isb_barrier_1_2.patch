@@ -1,0 +1,35 @@
+From eb6a4dcce33925ac95023bbe5199474f8db40ba7 Mon Sep 17 00:00:00 2001
+From: Will Deacon <will@kernel.org>
+Date: Fri, 23 Aug 2019 13:03:55 +0100
+Subject: [PATCH] arm64: mm: Add ISB instruction to set_pgd()
+
+Commit 6a4cbd63c25a ("Revert "arm64: Remove unnecessary ISBs from
+set_{pte,pmd,pud}"") reintroduced ISB instructions to some of our
+page table setter functions in light of a recent clarification to the
+Armv8 architecture. Although 'set_pgd()' isn't currently used to update
+a live page table, add the ISB instruction there too for consistency
+with the other macros and to provide some future-proofing if we use it
+on live tables in the future.
+
+Reported-by: Mark Rutland <mark.rutland@arm.com>
+Reviewed-by: Mark Rutland <mark.rutland@arm.com>
+Signed-off-by: Will Deacon <will@kernel.org>
+---
+ arch/arm64/include/asm/pgtable.h | 1 +
+ 1 file changed, 1 insertion(+)
+
+diff --git a/arch/arm64/include/asm/pgtable.h b/arch/arm64/include/asm/pgtable.h
+index 960d05c..5ad4559 100644
+--- a/arch/arm64/include/asm/pgtable.h
++++ b/arch/arm64/include/asm/pgtable.h
+@@ -511,6 +511,7 @@ static inline void set_pgd(pgd_t *pgdp, pgd_t pgd)
+ {
+ 	*pgdp = pgd;
+ 	dsb(ishst);
++	isb();
+ }
+ 
+ static inline void pgd_clear(pgd_t *pgdp)
+-- 
+2.7.4
+

@@ -1,0 +1,94 @@
+From 9d111d49106b61f5a652d5418e85d8741b1a0427 Mon Sep 17 00:00:00 2001
+From: Ard Biesheuvel <ard.biesheuvel@linaro.org>
+Date: Tue, 17 Oct 2017 17:55:55 +0100
+Subject: [PATCH] irqchip/gic: Make quirks matching conditional on init return
+ value
+
+As it turns out, the IIDR is not sufficient to distinguish between GICv3
+implementations when it comes to enabling quirks. So update the prototype
+of the init() hook to return a bool, and interpret a 'false' return value
+as no match, in which case the 'enabling workaround' log message should
+not be printed.
+
+Signed-off-by: Ard Biesheuvel <ard.biesheuvel@linaro.org>
+Signed-off-by: Marc Zyngier <marc.zyngier@arm.com>
+---
+ drivers/irqchip/irq-gic-common.c |  5 +++--
+ drivers/irqchip/irq-gic-common.h |  2 +-
+ drivers/irqchip/irq-gic-v3-its.c | 12 +++++++++---
+ 3 files changed, 13 insertions(+), 6 deletions(-)
+
+diff --git a/drivers/irqchip/irq-gic-common.c b/drivers/irqchip/irq-gic-common.c
+index 9ae7180..30017df 100644
+--- a/drivers/irqchip/irq-gic-common.c
++++ b/drivers/irqchip/irq-gic-common.c
+@@ -40,8 +40,9 @@ void gic_enable_quirks(u32 iidr, const struct gic_quirk *quirks,
+ 	for (; quirks->desc; quirks++) {
+ 		if (quirks->iidr != (quirks->mask & iidr))
+ 			continue;
+-		quirks->init(data);
+-		pr_info("GIC: enabling workaround for %s\n", quirks->desc);
++		if (quirks->init(data))
++			pr_info("GIC: enabling workaround for %s\n",
++				quirks->desc);
+ 	}
+ }
+ 
+diff --git a/drivers/irqchip/irq-gic-common.h b/drivers/irqchip/irq-gic-common.h
+index 205e5fd..3919cd7 100644
+--- a/drivers/irqchip/irq-gic-common.h
++++ b/drivers/irqchip/irq-gic-common.h
+@@ -23,7 +23,7 @@
+ 
+ struct gic_quirk {
+ 	const char *desc;
+-	void (*init)(void *data);
++	bool (*init)(void *data);
+ 	u32 iidr;
+ 	u32 mask;
+ };
+diff --git a/drivers/irqchip/irq-gic-v3-its.c b/drivers/irqchip/irq-gic-v3-its.c
+index 8c8e894..2baee97 100644
+--- a/drivers/irqchip/irq-gic-v3-its.c
++++ b/drivers/irqchip/irq-gic-v3-its.c
+@@ -2751,28 +2751,34 @@ static int its_force_quiescent(void __iomem *base)
+ 	}
+ }
+ 
+-static void __maybe_unused its_enable_quirk_cavium_22375(void *data)
++static bool __maybe_unused its_enable_quirk_cavium_22375(void *data)
+ {
+ 	struct its_node *its = data;
+ 
+ 	/* erratum 22375: only alloc 8MB table size */
+ 	its->device_ids = 0x14;		/* 20 bits, 8MB */
+ 	its->flags |= ITS_FLAGS_WORKAROUND_CAVIUM_22375;
++
++	return true;
+ }
+ 
+-static void __maybe_unused its_enable_quirk_cavium_23144(void *data)
++static bool __maybe_unused its_enable_quirk_cavium_23144(void *data)
+ {
+ 	struct its_node *its = data;
+ 
+ 	its->flags |= ITS_FLAGS_WORKAROUND_CAVIUM_23144;
++
++	return true;
+ }
+ 
+-static void __maybe_unused its_enable_quirk_qdf2400_e0065(void *data)
++static bool __maybe_unused its_enable_quirk_qdf2400_e0065(void *data)
+ {
+ 	struct its_node *its = data;
+ 
+ 	/* On QDF2400, the size of the ITE is 16Bytes */
+ 	its->ite_size = 16;
++
++	return true;
+ }
+ 
+ static const struct gic_quirk its_quirks[] = {
+-- 
+2.7.4
+
