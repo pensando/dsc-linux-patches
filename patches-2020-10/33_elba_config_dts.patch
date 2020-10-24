@@ -10,7 +10,7 @@ Subject: [PATCH] arch/arm64: Pensando elba dts and config files
  arch/arm64/boot/dts/pensando/elba-asic-common.dtsi | 108 +++++++++
  arch/arm64/boot/dts/pensando/elba-asic.dts         |   7 +
  arch/arm64/boot/dts/pensando/elba-flash-parts.dtsi |  64 +++++
- arch/arm64/boot/dts/pensando/elba.dtsi             | 265 ++++++++++++++++++++
+ arch/arm64/boot/dts/pensando/elba.dtsi             | 261 ++++++++++++++++++++
  arch/arm64/configs/elba_defconfig                  | 270 +++++++++++++++++++++
  8 files changed, 891 insertions(+)
  create mode 100644 arch/arm64/boot/dts/pensando/Makefile
@@ -423,7 +423,7 @@ new file mode 100644
 index 00000000..8e243bc
 --- /dev/null
 +++ b/arch/arm64/boot/dts/pensando/elba.dtsi
-@@ -0,0 +1,265 @@
+@@ -0,0 +1,261 @@
 +
 +/*
 + * Copyright (c) 2019, Pensando Systems Inc.
@@ -636,7 +636,6 @@ index 00000000..8e243bc
 +			reg = <0x0 0x1400 0x0 0x100>;
 +			clocks = <&ahb_clk>;
 +			interrupts = <GIC_SPI 10 IRQ_TYPE_LEVEL_HIGH>;
-+			snps,reset-pulse-len = <256>;
 +			status = "disabled";
 +		};
 +		wdt1: watchdog@1800 {
@@ -644,7 +643,6 @@ index 00000000..8e243bc
 +			reg = <0x0 0x1800 0x0 0x100>;
 +			clocks = <&ahb_clk>;
 +			interrupts = <GIC_SPI 11 IRQ_TYPE_LEVEL_HIGH>;
-+			snps,reset-pulse-len = <256>;
 +			status = "disabled";
 +		};
 +		wdt2: watchdog@1c00 {
@@ -652,7 +650,6 @@ index 00000000..8e243bc
 +			reg = <0x0 0x1c00 0x0 0x100>;
 +			clocks = <&ahb_clk>;
 +			interrupts = <GIC_SPI 12 IRQ_TYPE_LEVEL_HIGH>;
-+			snps,reset-pulse-len = <256>;
 +			status = "disabled";
 +		};
 +		wdt3: watchdog@2000 {
@@ -660,7 +657,6 @@ index 00000000..8e243bc
 +			reg = <0x0 0x2000 0x0 0x100>;
 +			clocks = <&ahb_clk>;
 +			interrupts = <GIC_SPI 13 IRQ_TYPE_LEVEL_HIGH>;
-+			snps,reset-pulse-len = <256>;
 +			status = "disabled";
 +		};
 +
