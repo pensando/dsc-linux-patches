@@ -1,0 +1,149 @@
+From 5fdd54202e76728337fb201c35a1d2ccc9049347 Mon Sep 17 00:00:00 2001
+From: David Clear <dac2@pensando.io>
+Date: Thu, 12 Nov 2020 15:36:35 -0800
+Subject: [PATCH] spi-dw: custom chip-select handler for elba
+
+Use a custom chip-select handler for Elba to ensure that a valid
+Designware intrinsic chip-select is still activated even when using GPIOs.
+
+Specify "pensando,elba-spi" in the device-tree to pick up this change.
+Remove the unusable ssi1 device from elba.dtsi.
+
+Signed-off-by: David Clear <dac2@pensando.io>
+---
+ arch/arm64/boot/dts/pensando/elba.dtsi | 14 +--------
+ drivers/spi/spi-dw-mmio.c              | 41 ++++++++++++++++++++++++++
+ drivers/spi/spi-dw.c                   |  5 +++-
+ drivers/spi/spi-dw.h                   |  1 +
+ 4 files changed, 47 insertions(+), 14 deletions(-)
+
+diff --git a/arch/arm64/boot/dts/pensando/elba.dtsi b/arch/arm64/boot/dts/pensando/elba.dtsi
+index e6f3fb13cd65..8683ec2f9657 100644
+--- a/arch/arm64/boot/dts/pensando/elba.dtsi
++++ b/arch/arm64/boot/dts/pensando/elba.dtsi
+@@ -183,25 +183,13 @@
+ 		};
+ 
+ 		ssi0: ssi@2800 {
+-			compatible = "snps,dw-apb-ssi";
++			compatible = "pensando,elba-spi";
+ 			reg = <0x0 0x2800 0x0 0x100>;
+ 			clocks = <&ahb_clk>;
+ 			interrupts = <GIC_SPI 9 IRQ_TYPE_LEVEL_HIGH>;
+ 			#address-cells = <1>;
+ 			#size-cells = <0>;
+ 			num-cs = <2>;
+-			cs-gpios = <&spics 0 0>, <&spics 1 0>;
+-			status = "disabled";
+-		};
+-		ssi1: ssi@2c00 {
+-			compatible = "snps,dw-apb-ssi";
+-			reg = <0x0 0x2c00 0x0 0x100>;
+-			clocks = <&ahb_clk>;
+-			interrupts = <GIC_SPI 8 IRQ_TYPE_LEVEL_HIGH>;
+-			#address-cells = <1>;
+-			#size-cells = <0>;
+-			num-cs = <2>;
+-			cs-gpios = <&spics 2 0>, <&spics 3 0>;
+ 			status = "disabled";
+ 		};
+ 
+diff --git a/drivers/spi/spi-dw-mmio.c b/drivers/spi/spi-dw-mmio.c
+index d25cc4037e23..bea5d00100ce 100644
+--- a/drivers/spi/spi-dw-mmio.c
++++ b/drivers/spi/spi-dw-mmio.c
+@@ -30,8 +30,41 @@ struct dw_spi_mmio {
+ 	struct clk     *clk;
+ };
+ 
++static void dw_spi_elba_set_cs(struct spi_device *spi, bool enable)
++{
++	struct dw_spi *dws = spi_master_get_devdata(spi->master);
++
++	if (!enable) {
++		if (gpio_is_valid(spi->cs_gpio)) {
++			/*
++			 * Using a GPIO-based chip-select, the DW SPI
++			 * controller still needs its own CS bit selected
++			 * to start the serial engine.  On Elba the specific
++			 * CS doesn't matter, so use CS0.
++			 */
++			dw_writel(dws, DW_SPI_SER, BIT(0));
++		} else {
++			/*
++			 * Using the intrinsic DW chip-select; set the
++			 * appropriate CS.
++			 */
++			dw_writel(dws, DW_SPI_SER, BIT(spi->chip_select));
++		}
++	} else
++		dw_writel(dws, DW_SPI_SER, 0);
++}
++
++static int dw_spi_elba_init(struct platform_device *pdev,
++			    struct dw_spi_mmio *dwsmmio)
++{
++	dwsmmio->dws.set_cs = dw_spi_elba_set_cs;
++	return 0;
++}
++
+ static int dw_spi_mmio_probe(struct platform_device *pdev)
+ {
++	int (*init_func)(struct platform_device *pdev,
++			 struct dw_spi_mmio *dwsmmio);
+ 	struct dw_spi_mmio *dwsmmio;
+ 	struct dw_spi *dws;
+ 	struct resource *mem;
+@@ -99,6 +132,13 @@ static int dw_spi_mmio_probe(struct platform_device *pdev)
+ 		}
+ 	}
+ 
++	init_func = of_device_get_match_data(&pdev->dev);
++	if (init_func) {
++		ret = init_func(pdev, dwsmmio);
++		if (ret)
++			goto out;
++	}
++
+ 	ret = dw_spi_add_host(&pdev->dev, dws);
+ 	if (ret)
+ 		goto out;
+@@ -123,6 +163,7 @@ static int dw_spi_mmio_remove(struct platform_device *pdev)
+ 
+ static const struct of_device_id dw_spi_mmio_of_match[] = {
+ 	{ .compatible = "snps,dw-apb-ssi", },
++	{ .compatible = "pensando,elba-spi", .data = dw_spi_elba_init },
+ 	{ /* end of table */}
+ };
+ MODULE_DEVICE_TABLE(of, dw_spi_mmio_of_match);
+diff --git a/drivers/spi/spi-dw.c b/drivers/spi/spi-dw.c
+index b11d0cd3fd20..c7189f2d7e88 100644
+--- a/drivers/spi/spi-dw.c
++++ b/drivers/spi/spi-dw.c
+@@ -514,7 +514,10 @@ int dw_spi_add_host(struct device *dev, struct dw_spi *dws)
+ 	master->num_chipselect = dws->num_cs;
+ 	master->setup = dw_spi_setup;
+ 	master->cleanup = dw_spi_cleanup;
+-	master->set_cs = dw_spi_set_cs;
++	if (dws->set_cs)
++		master->set_cs = dws->set_cs;
++	else
++		master->set_cs = dw_spi_set_cs;
+ 	master->transfer_one = dw_spi_transfer_one;
+ 	master->handle_err = dw_spi_handle_err;
+ 	master->max_speed_hz = dws->max_freq;
+diff --git a/drivers/spi/spi-dw.h b/drivers/spi/spi-dw.h
+index 45fbf3ad591c..a163af052256 100644
+--- a/drivers/spi/spi-dw.h
++++ b/drivers/spi/spi-dw.h
+@@ -112,6 +112,7 @@ struct dw_spi {
+ 	u32			reg_io_width;	/* DR I/O width in bytes */
+ 	u16			bus_num;
+ 	u16			num_cs;		/* supported slave numbers */
++	void (*set_cs)(struct spi_device *spi, bool enable);
+ 
+ 	/* Current message transfer state info */
+ 	size_t			len;
+-- 
+2.17.1
+
