@@ -1,0 +1,25 @@
+From 1514b0d28a66e8a5d88ef19ca9ec67594c36a2ba Mon Sep 17 00:00:00 2001
+From: David Clear <dac2@pensando.io>
+Date: Thu, 7 Jan 2021 14:11:09 -0800
+Subject: [PATCH] elba: Add IPv6 support to elba_defconfig
+
+Signed-off-by: David Clear <dac2@pensando.io>
+---
+ arch/arm64/configs/elba_defconfig | 1 -
+ 1 file changed, 1 deletion(-)
+
+diff --git a/arch/arm64/configs/elba_defconfig b/arch/arm64/configs/elba_defconfig
+index f89d179618a1..efe472b76986 100644
+--- a/arch/arm64/configs/elba_defconfig
++++ b/arch/arm64/configs/elba_defconfig
+@@ -78,7 +78,6 @@ CONFIG_INET_AH=y
+ CONFIG_INET_ESP=y
+ CONFIG_INET_IPCOMP=y
+ CONFIG_TCP_MD5SIG=y
+-# CONFIG_IPV6 is not set
+ CONFIG_NETFILTER=y
+ CONFIG_NETFILTER_XT_TARGET_DSCP=y
+ CONFIG_NETFILTER_XT_MATCH_DSCP=y
+-- 
+2.17.1
+
