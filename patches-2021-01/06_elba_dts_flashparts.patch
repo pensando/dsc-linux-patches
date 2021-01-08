@@ -1,0 +1,52 @@
+From 80b2a210d6372fa944b8dcfe2c09590b98247c9d Mon Sep 17 00:00:00 2001
+From: David Clear <dac2@pensando.io>
+Date: Thu, 7 Jan 2021 19:14:25 -0800
+Subject: [PATCH] elba: u-boot environment partitions in the device-tree
+
+Add golduenv, uservars, and ubootenv flash partitions to elba-flash-parts.dtsi.
+
+Signed-off-by: David Clear <dac2@pensando.io>
+---
+ arch/arm64/boot/dts/pensando/elba-flash-parts.dtsi | 12 ++++++++++++
+ 1 file changed, 12 insertions(+)
+
+diff --git a/arch/arm64/boot/dts/pensando/elba-flash-parts.dtsi b/arch/arm64/boot/dts/pensando/elba-flash-parts.dtsi
+index e58c81a36545..71089ed78ef2 100644
+--- a/arch/arm64/boot/dts/pensando/elba-flash-parts.dtsi
++++ b/arch/arm64/boot/dts/pensando/elba-flash-parts.dtsi
+@@ -7,6 +7,10 @@
+ 			label = "flash";
+ 			reg = <0x00010000 0x0fff0000>;
+ 		};
++		partition@000f0000 {
++			label = "golduenv";
++			reg = <0x000f0000 0x00010000>;
++		};
+ 		partition@100000 {
+ 			label = "boot0";
+ 			reg = <0x00100000 0x00080000>;
+@@ -35,6 +39,10 @@
+ 			label = "panicbuf";
+ 			reg = <0x040b0000 0x00020000>;
+ 		};
++		partition@040d0000 {
++			label = "uservars";
++			reg = <0x040d0000 0x00020000>;
++		};
+ 		partition@4200000 {
+ 			label = "uboota";
+ 			reg = <0x04200000 0x00400000>;
+@@ -55,6 +63,10 @@
+ 			label = "diagfw";
+ 			reg = <0x08000000 0x07fe0000>;
+ 		};
++		partition@0ffe0000 {
++			label = "ubootenv";
++			reg = <0x0ffe0000 0x00010000>;
++		};
+ 	};
+ };
+ 
+-- 
+2.17.1
+

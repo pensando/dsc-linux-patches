@@ -1,0 +1,29 @@
+From 56c17617503448c84dfaa8031de47637da19430c Mon Sep 17 00:00:00 2001
+From: David Clear <dac2@pensando.io>
+Date: Thu, 7 Jan 2021 14:02:17 -0800
+Subject: [PATCH] elba: Change defconfig loglevel to 4
+
+This change sets the CONFIG_CONSOLE_LOGLEVEL_DEFAULT to 4, to stop the
+kernel messages coming out of the console at boot time.
+
+Signed-off-by: David Clear <dac2@pensando.io>
+---
+ arch/arm64/configs/elba_defconfig | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/arch/arm64/configs/elba_defconfig b/arch/arm64/configs/elba_defconfig
+index 3fec73860c10..f89d179618a1 100644
+--- a/arch/arm64/configs/elba_defconfig
++++ b/arch/arm64/configs/elba_defconfig
+@@ -238,7 +238,7 @@ CONFIG_NLS=y
+ CONFIG_NLS_CODEPAGE_437=y
+ CONFIG_NLS_ISO8859_1=y
+ CONFIG_PRINTK_TIME=y
+-CONFIG_MESSAGE_LOGLEVEL_DEFAULT=7
++CONFIG_CONSOLE_LOGLEVEL_DEFAULT=4
+ CONFIG_DYNAMIC_DEBUG=y
+ CONFIG_DEBUG_INFO=y
+ # CONFIG_SCHED_DEBUG is not set
+-- 
+2.17.1
+
