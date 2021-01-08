@@ -5,6 +5,8 @@ Subject: [PATCH] drivers/soc/pensando: crash dump driver.
 
 The crash dump driver writes the kernel message log to
 memory-mapped qspi flash.
+
+Signed-off-by: David Clear <dac2@pensando.io>
 ---
  drivers/soc/pensando/Kconfig     |   6 ++
  drivers/soc/pensando/Makefile    |   1 +

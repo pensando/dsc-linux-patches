@@ -5,6 +5,8 @@ Subject: [PATCH] mtd: spi-nor: add mx66u51235f and mx66u2g45g devices.
 
 Declare support for SPI_NOR_DUAL_READ on the Micron
 MT25QU02G device, and add the declaration for the Macronix MX66U2G45G
+
+Signed-off-by: David Clear <dac2@pensando.io>
 ---
  drivers/mtd/spi-nor/spi-nor.c | 3 ++-
  1 file changed, 2 insertions(+), 1 deletion(-)

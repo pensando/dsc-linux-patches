@@ -3,6 +3,7 @@ From: David Clear <dac2@pensando.io>
 Date: Thu, 22 Oct 2020 16:58:06 -0700
 Subject: [PATCH] drivers/gpio: support the Elba SPI chip-selects.
 
+Signed-off-by: David Clear <dac2@pensando.io>
 ---
  drivers/gpio/Kconfig           |   6 +++
  drivers/gpio/Makefile          |   1 +

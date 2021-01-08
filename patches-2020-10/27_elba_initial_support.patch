@@ -3,6 +3,7 @@ From: David Clear <dac2@pensando.io>
 Date: Thu, 22 Oct 2020 16:58:06 -0700
 Subject: [PATCH] arch/arm64: Pensando Elba SoC declaration.
 
+Signed-off-by: David Clear <dac2@pensando.io>
 ---
  arch/arm64/Kconfig.platforms |  5 +++++
  drivers/soc/Kconfig          |  1 +

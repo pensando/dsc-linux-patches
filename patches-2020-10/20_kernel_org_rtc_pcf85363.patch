@@ -7,6 +7,8 @@ Subject: [PATCH] drivers/rtc: add support for NXP PCF85363/PCF85263
 This commit imports 8f7b1d7:drivers/rtc/rtc-pcf85363.c from kernel.org,
 but removes the nvram functions that aren't compatible with the
 v4.14.18 kernel.
+
+Signed-off-by: David Clear <dac2@pensando.io>
 ---
  drivers/rtc/Kconfig        |  13 ++
  drivers/rtc/Makefile       |   1 +
