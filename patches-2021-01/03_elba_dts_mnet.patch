@@ -1,0 +1,30 @@
+From 4c05a5325bec9f05ae5b2377b246e1bdcf3acd09 Mon Sep 17 00:00:00 2001
+From: David Clear <dac2@pensando.io>
+Date: Thu, 7 Jan 2021 14:12:07 -0800
+Subject: [PATCH] elba: one more mnet for elba.dtsi
+
+Add one more mnet device to the Elba device-tree.
+
+Signed-off-by: David Clear <dac2@pensando.io>
+---
+ arch/arm64/boot/dts/pensando/elba.dtsi | 4 ++++
+ 1 file changed, 4 insertions(+)
+
+diff --git a/arch/arm64/boot/dts/pensando/elba.dtsi b/arch/arm64/boot/dts/pensando/elba.dtsi
+index 8683ec2f9657..5974eb29f746 100644
+--- a/arch/arm64/boot/dts/pensando/elba.dtsi
++++ b/arch/arm64/boot/dts/pensando/elba.dtsi
+@@ -174,6 +174,10 @@
+ 			compatible = "pensando,mnet";
+ 			msi-parent = <&its 0x8>;
+ 		};
++		mnet9: mnet9 {
++			compatible = "pensando,mnet";
++			msi-parent = <&its 0x9>;
++		};
+ 
+ 		spics: spics@307c2468 {
+ 			compatible = "pensando,elba-spics";
+-- 
+2.17.1
+
