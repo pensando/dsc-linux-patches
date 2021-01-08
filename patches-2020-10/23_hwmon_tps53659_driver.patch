@@ -4,6 +4,7 @@ Date: Thu, 22 Oct 2020 16:58:04 -0700
 Subject: [PATCH] hwmon/pmbus: Add a driver for the TI TPS53659, based on
  Vadim Pasternak's TPS53679.c driver.
 
+Signed-off-by: David Clear <dac2@pensando.io>
 ---
  drivers/hwmon/pmbus/Kconfig    |   9 ++++
  drivers/hwmon/pmbus/Makefile   |   1 +

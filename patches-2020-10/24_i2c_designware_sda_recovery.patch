@@ -14,6 +14,8 @@ time in the recovery loop.
 
 Details on the I2C device are in the Synopsys DesignWare DW_apb_i2c
 Databook.
+
+Signed-off-by: David Clear <dac2@pensando.io>
 ---
  drivers/i2c/busses/i2c-designware-core.h    | 18 +++++--
  drivers/i2c/busses/i2c-designware-master.c  | 77 +++++++++++++++++++++++++++++

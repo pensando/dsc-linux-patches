@@ -5,6 +5,8 @@ Subject: [PATCH] revert 159a8b4 as struct_size() is not available in 4.14.18.
 
 The 159a8b4 was a prerequisite to cleanly apply other sdhci-cadence.c patches.
 With those patches applied, we can revert this one.
+
+Signed-off-by: David Clear <dac2@pensando.io>
 ---
  drivers/mmc/host/sdhci-cadence.c | 5 +++--
  1 file changed, 3 insertions(+), 2 deletions(-)

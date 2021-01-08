@@ -3,6 +3,7 @@ From: David Clear <dac2@pensando.io>
 Date: Thu, 22 Oct 2020 16:58:08 -0700
 Subject: [PATCH] arch/arm64: Pensando elba dts and config files
 
+Signed-off-by: David Clear <dac2@pensando.io>
 ---
  arch/arm64/boot/dts/Makefile                       |   1 +
  arch/arm64/boot/dts/pensando/Makefile              |   6 +

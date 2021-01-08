@@ -5,6 +5,8 @@ Subject: [PATCH] drivers/soc/pensando: /dev/capmem driver.
 
 The capmem driver provides an controlled interface for applications
 to map memory (in preference to /dev/mem).
+
+Signed-off-by: David Clear <dac2@pensando.io>
 ---
  drivers/soc/Makefile              |   1 +
  drivers/soc/pensando/Kconfig      |   8 ++

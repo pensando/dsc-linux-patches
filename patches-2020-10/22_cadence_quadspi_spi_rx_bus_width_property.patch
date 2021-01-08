@@ -6,6 +6,8 @@ Subject: [PATCH] mtd/spi-nor/cadence-quadspi.c: support spi-rx-bus-width
 
 This commit allows the width of the bus between the controller and the
 device to be specified in the device tree.
+
+Signed-off-by: David Clear <dac2@pensando.io>
 ---
  drivers/mtd/spi-nor/cadence-quadspi.c | 17 ++++++++++++++---
  1 file changed, 14 insertions(+), 3 deletions(-)

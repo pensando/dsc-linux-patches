@@ -9,6 +9,8 @@ of recovery should a Linux image fail to start.  If the BSM is
 armed and a kernel panic + reset occur, then the boot firmware
 will consider the loaded image as bad and will select the alternate
 image to boot next.
+
+Signed-off-by: David Clear <dac2@pensando.io>
 ---
  drivers/soc/pensando/Kconfig   |  12 ++++
  drivers/soc/pensando/Makefile  |   1 +

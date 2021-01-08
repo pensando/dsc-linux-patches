@@ -8,6 +8,8 @@ The Pensando SoC QSPI controller has a hazard between writes to the APB
 interface and writes to AHB that affects indirect writes.  A dummy
 APB register read is required between the APB write that starts an
 indirect write operation, and the first AHB write of data.
+
+Signed-off-by: David Clear <dac2@pensando.io>
 ---
  drivers/mtd/spi-nor/cadence-quadspi.c | 26 ++++++++++++++++++++++++--
  1 file changed, 24 insertions(+), 2 deletions(-)

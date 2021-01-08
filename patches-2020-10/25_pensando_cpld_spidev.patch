@@ -6,6 +6,8 @@ Subject: [PATCH] drivers/spi/spidev.c: Add pensando,cpld device tree
 
 The Pensando ASICs uses a spidev interface to access the board
 CPLD.  This commit adds support for the entry in spidev.c
+
+Signed-off-by: David Clear <dac2@pensando.io>
 ---
  drivers/spi/spidev.c | 1 +
  1 file changed, 1 insertion(+)
