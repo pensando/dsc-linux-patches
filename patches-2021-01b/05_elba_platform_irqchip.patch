@@ -46,13 +46,13 @@ index a7b0685d4ed4..7aefb4c8e342 100644
 @@ -79,6 +79,22 @@
  			};
  		};
- 
+
 +		/*
-+ 		 * Until we  know the interrupt domain following this, we
-+ 		 * are forced to use this is the place where interrupts from
-+ 		 * PCI converge. In the ideal case, we use one domain higher,
-+ 		 * where the PCI-ness has been shed.
-+ 		 */
++		 * Until we  know the interrupt domain following this, we
++		 * are forced to use this is the place where interrupts from
++		 * PCI converge. In the ideal case, we use one domain higher,
++		 * where the PCI-ness has been shed.
++		 */
 +		pxc0_intr: intc@20102200 {
 +			compatible = "pensando,soc-ictlr-csrintr";
 +			interrupt-controller;
@@ -69,7 +69,7 @@ index a7b0685d4ed4..7aefb4c8e342 100644
 @@ -183,6 +199,36 @@
  			msi-parent = <&its 0x9>;
  		};
- 
+
 +		/* UIO device using interrupt line PCIEMAC */
 +		pciemac {
 +			#address-cells = <2>;
@@ -163,7 +163,7 @@ index 000000000000..f07025393706
 + *	unnecessary leading GIC_SPI.
 + * o	Drop enable_csr_padddr and enable_mask:
 + *
-+ *	a.	Change reg to have what is now in enable_csr_paddr be 
++ *	a.	Change reg to have what is now in enable_csr_paddr be
 + *		the first element, which will be the same as the current
 + *		value of enable_csr_paddr.
 + *	b.	The enable mask should be the same as 1 shifted left by
@@ -826,7 +826,7 @@ index 000000000000..f07025393706
 +	int ret = 0;
 +
 +	pr_info("Probe IRQ domain controller %s\n", dn->full_name);
-+	
++
 +	if (parent == NULL) {
 +		pr_err("%pOF has no device node parent\n", dn);
 +		return ERR_PTR(-ENODEV);
@@ -1020,7 +1020,7 @@ index 7e8dc78a9796..218597fca1da 100644
 +++ b/drivers/uio/Kconfig
 @@ -164,4 +164,37 @@ config UIO_HV_GENERIC
  	  to network and storage devices from userspace.
- 
+
  	  If you compile this as a module, it will be called uio_hv_generic.
 +
 +config UIO_PCIEMAC
@@ -1114,7 +1114,7 @@ index 000000000000..1c5529e56b05
 + *
 + * To do:
 + * o	Get enable_csr from the "reg" property
-+ * o	Get enable_mask from the device nodes "interrupts" property 
++ * o	Get enable_mask from the device nodes "interrupts" property
 + */
 +
 +#include <linux/dma-mapping.h>
@@ -1368,7 +1368,7 @@ index 000000000000..1c5529e56b05
 +	irq_desc = irq_to_desc(virq);
 +	hwirq = irq_desc->irq_data.hwirq;
 +	enable_mask = 1 << hwirq;
-+	
++
 +	for (i = 0; i < platdata->n_res; i++) {
 +		void *p;
 +
@@ -1486,11 +1486,11 @@ index 000000000000..1c5529e56b05
 +	case 0:
 +		pengic_disable_intr(platdata);
 +		break;
-+	
++
 +	case 1:
 +		pengic_enable_intr(platdata);
 +		break;
-+	
++
 +	default:
 +		return -EINVAL;
 +		break;
@@ -2035,7 +2035,7 @@ index 000000000000..da74d9edffc2
 +	kobject_init(&devdata->penmsi_dir->kobj, &penmsi_attr_type);
 +
 +	ret = kobject_add(&devdata->penmsi_dir->kobj, &uio_dev->dev->kobj,
-+		"pensando"); 
++		"pensando");
 +	if (ret != 0)
 +		goto remove_penmsi_dir;
 +
