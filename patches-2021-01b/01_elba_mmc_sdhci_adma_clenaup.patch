@@ -1,0 +1,306 @@
+From 23d021032b54a182f6ce258e4b0974f8742f0697 Mon Sep 17 00:00:00 2001
+From: David Clear <dac2@pensando.io>
+Date: Wed, 27 Jan 2021 14:46:28 -0800
+Subject: [PATCH] mmc: sdhci-cadence-elba ADMA and HS200 tuning support
+
+sdhci-cadence-elba.c:
+    - support tuning on HS200
+    - support ADMA 32-bit mode
+    - use a spinlock on accessors
+    - use the real address for the byte lane control register, rather than
+      the block base with 0x44 added each time it's used.
+      (change in arch/arm64/boot/dts/pensando/elba.dtsi too)
+
+sdhci-cadence.c:
+    - support accessors for Cadence HRS register writes; required
+      for sdhci-cadence-elba.c
+
+Signed-off-by: David Clear <dac2@pensando.io>
+---
+ arch/arm64/boot/dts/pensando/elba.dtsi |  2 +-
+ drivers/mmc/host/sdhci-cadence-elba.c  | 62 +++++++++++---------------
+ drivers/mmc/host/sdhci-cadence.c       | 28 ++++++------
+ drivers/mmc/host/sdhci-cadence.h       | 24 +++++++++-
+ 4 files changed, 65 insertions(+), 51 deletions(-)
+
+diff --git a/arch/arm64/boot/dts/pensando/elba.dtsi b/arch/arm64/boot/dts/pensando/elba.dtsi
+index 9eb7224be76e..65a73996d9a3 100644
+--- a/arch/arm64/boot/dts/pensando/elba.dtsi
++++ b/arch/arm64/boot/dts/pensando/elba.dtsi
+@@ -235,7 +235,7 @@
+ 			clocks = <&emmc_clk>;
+ 			interrupts = <GIC_SPI 26 IRQ_TYPE_LEVEL_HIGH>;
+ 			reg = <0x0 0x30440000 0x0 0x10000
+-			       0x0 0x30480000 0x0 0x1000>;
++			       0x0 0x30480044 0x0 0x4>;
+ 			cdns,phy-input-delay-sd-highspeed = <0x4>;
+ 			cdns,phy-input-delay-legacy = <0x4>;
+ 			cdns,phy-input-delay-sd-uhs-sdr50 = <0x6>;
+diff --git a/drivers/mmc/host/sdhci-cadence-elba.c b/drivers/mmc/host/sdhci-cadence-elba.c
+index 253a87f669a7..327a9f1ccc0f 100644
+--- a/drivers/mmc/host/sdhci-cadence-elba.c
++++ b/drivers/mmc/host/sdhci-cadence-elba.c
+@@ -23,81 +23,72 @@
+ 
+ // delay regs address
+ #define SDIO_REG_HRS4		0x10
+-#define SDIO_REG_HRS6		0x18
+-#define SDIO_REG_HRS44		0xb0
+ #define REG_DELAY_HS		0x00
+ #define REG_DELAY_DEFAULT	0x01
+-#define REG_DELAY_UHSI_SDR12	0x02
+-#define REG_DELAY_UHSI_SDR25	0x03
+ #define REG_DELAY_UHSI_SDR50	0x04
+ #define REG_DELAY_UHSI_DDR50	0x05
+ 
+-static u32 elba_read_l(struct sdhci_host *host, int reg)
+-{
+-	struct sdhci_cdns_priv *priv = sdhci_cdns_priv(host);
+-
+-	writel(0x0, priv->ctl_addr + 0x44);
+-	return readl(host->ioaddr + reg);
+-}
+-
+ static u16 elba_read_w(struct sdhci_host *host, int reg)
+ {
+-	struct sdhci_cdns_priv *priv = sdhci_cdns_priv(host);
+-	u16 res;
+-
+-	writel(0x0, priv->ctl_addr + 0x44);
+-	res = readw(host->ioaddr + reg);
++	u16 res = readw(host->ioaddr + reg);
+ 
+ 	if (unlikely(reg == SDHCI_HOST_VERSION)) {
+ 		/* claim to be spec 3.00 to avoid "Unknown version" warning */
+ 		res = (res & SDHCI_VENDOR_VER_MASK) | SDHCI_SPEC_300;
+ 	}
+-
+ 	return res;
+ }
+ 
+-static u8 elba_read_b(struct sdhci_host *host, int reg)
+-{
+-	struct sdhci_cdns_priv *priv = sdhci_cdns_priv(host);
+-
+-	writel(0x0, priv->ctl_addr + 0x44);
+-	return readb(host->ioaddr + reg);
+-}
+-
+ static void elba_write_l(struct sdhci_host *host, u32 val, int reg)
+ {
+ 	struct sdhci_cdns_priv *priv = sdhci_cdns_priv(host);
++	unsigned long flags;
+ 
+-	writel(0x78, priv->ctl_addr + 0x44);
++	spin_lock_irqsave(&priv->wrlock, flags);
++	writel(0x78, priv->ctl_addr);
+ 	writel(val, host->ioaddr + reg);
++	spin_unlock_irqrestore(&priv->wrlock, flags);
+ }
+ 
+ static void elba_write_w(struct sdhci_host *host, u16 val, int reg)
+ {
+ 	struct sdhci_cdns_priv *priv = sdhci_cdns_priv(host);
++	unsigned long flags;
+ 	u32 m = (reg & 0x3);
+ 	u32 msk = (0x3 << (m));
+ 
+-	writel(msk << 3, priv->ctl_addr + 0x44);
++	spin_lock_irqsave(&priv->wrlock, flags);
++	writel(msk << 3, priv->ctl_addr);
+ 	writew(val, host->ioaddr + reg);
+-	writel(0x78, priv->ctl_addr + 0x44);
++	spin_unlock_irqrestore(&priv->wrlock, flags);
+ }
+ 
+ static void elba_write_b(struct sdhci_host *host, u8 val, int reg)
+ {
+ 	struct sdhci_cdns_priv *priv = sdhci_cdns_priv(host);
++	unsigned long flags;
+ 	u32 m = (reg & 0x3);
+ 	u32 msk = (0x1 << (m));
+ 
+-	writel(msk << 3, priv->ctl_addr + 0x44);
++	spin_lock_irqsave(&priv->wrlock, flags);
++	writel(msk << 3, priv->ctl_addr);
+ 	writeb(val, host->ioaddr + reg);
+-	writel(0x78, priv->ctl_addr + 0x44);
++	spin_unlock_irqrestore(&priv->wrlock, flags);
++}
++
++static void elba_priv_write_l(struct sdhci_cdns_priv *priv,
++		u32 val, void __iomem *reg)
++{
++	unsigned long flags;
++
++	spin_lock_irqsave(&priv->wrlock, flags);
++	writel(0x78, priv->ctl_addr);
++	writel(val, reg);
++	spin_unlock_irqrestore(&priv->wrlock, flags);
+ }
+ 
+ static const struct sdhci_ops sdhci_elba_ops = {
+-	.read_l = elba_read_l,
+ 	.read_w = elba_read_w,
+-	.read_b = elba_read_b,
+ 	.write_l = elba_write_l,
+ 	.write_w = elba_write_w,
+ 	.write_b = elba_write_b,
+@@ -149,7 +140,9 @@ static int elba_drv_init(struct platform_device *pdev)
+ 	if (IS_ERR(ioaddr))
+ 		return PTR_ERR(ioaddr);
+ 	priv->ctl_addr = ioaddr;
+-	writel(0x78, priv->ctl_addr + 0x44);
++	priv->priv_write_l = elba_priv_write_l;
++	spin_lock_init(&priv->wrlock);
++	writel(0x78, priv->ctl_addr);
+ 	phy_config(host);
+ 	return 0;
+ }
+@@ -160,5 +153,4 @@ const struct sdhci_cdns_drv_data sdhci_elba_drv_data = {
+ 		.ops = &sdhci_elba_ops,
+ 		.quirks = SDHCI_QUIRK_BROKEN_TIMEOUT_VAL,
+ 	},
+-	.no_retune = 1,
+ };
+diff --git a/drivers/mmc/host/sdhci-cadence.c b/drivers/mmc/host/sdhci-cadence.c
+index 35eb9cbdde92..f755083ac9e1 100644
+--- a/drivers/mmc/host/sdhci-cadence.c
++++ b/drivers/mmc/host/sdhci-cadence.c
+@@ -97,17 +97,17 @@ static int sdhci_cdns_write_phy_reg(struct sdhci_cdns_priv *priv,
+ 
+ 	tmp = FIELD_PREP(SDHCI_CDNS_HRS04_WDATA, data) |
+ 	      FIELD_PREP(SDHCI_CDNS_HRS04_ADDR, addr);
+-	writel(tmp, reg);
++	sdhci_cdns_priv_writel(priv, tmp, reg);
+ 
+ 	tmp |= SDHCI_CDNS_HRS04_WR;
+-	writel(tmp, reg);
++	sdhci_cdns_priv_writel(priv, tmp, reg);
+ 
+ 	ret = readl_poll_timeout(reg, tmp, tmp & SDHCI_CDNS_HRS04_ACK, 0, 10);
+ 	if (ret)
+ 		return ret;
+ 
+ 	tmp &= ~SDHCI_CDNS_HRS04_WR;
+-	writel(tmp, reg);
++	sdhci_cdns_priv_writel(priv, tmp, reg);
+ 
+ 	ret = readl_poll_timeout(reg, tmp, !(tmp & SDHCI_CDNS_HRS04_ACK),
+ 				 0, 10);
+@@ -177,7 +177,7 @@ static void sdhci_cdns_set_emmc_mode(struct sdhci_cdns_priv *priv, u32 mode)
+ 	tmp = readl(priv->hrs_addr + SDHCI_CDNS_HRS06);
+ 	tmp &= ~SDHCI_CDNS_HRS06_MODE;
+ 	tmp |= FIELD_PREP(SDHCI_CDNS_HRS06_MODE, mode);
+-	writel(tmp, priv->hrs_addr + SDHCI_CDNS_HRS06);
++	sdhci_cdns_priv_writel(priv, tmp, priv->hrs_addr + SDHCI_CDNS_HRS06);
+ }
+ 
+ static u32 sdhci_cdns_get_emmc_mode(struct sdhci_cdns_priv *priv)
+@@ -264,7 +264,7 @@ static int sdhci_cdns_set_tune_val(struct sdhci_host *host, unsigned int val)
+ 	 */
+ 	for (i = 0; i < 2; i++) {
+ 		tmp |= SDHCI_CDNS_HRS06_TUNE_UP;
+-		writel(tmp, reg);
++		sdhci_cdns_priv_writel(priv, tmp, reg);
+ 
+ 		ret = readl_poll_timeout(reg, tmp,
+ 					 !(tmp & SDHCI_CDNS_HRS06_TUNE_UP),
+@@ -312,6 +312,9 @@ static int sdhci_cdns_execute_tuning(struct mmc_host *mmc, u32 opcode)
+ 		return -EIO;
+ 	}
+ 
++	dev_info(mmc_dev(host->mmc), "tuning val %d streak end %d max %d\n",
++		 end_of_streak - max_streak / 2, end_of_streak, max_streak);
++
+ 	return sdhci_cdns_set_tune_val(host, end_of_streak - max_streak / 2);
+ }
+ 
+@@ -375,8 +378,7 @@ static int sdhci_cdns_probe(struct platform_device *pdev)
+ 	priv->hrs_addr = host->ioaddr;
+ 	priv->enhanced_strobe = false;
+ 	host->ioaddr += SDHCI_CDNS_SRS_BASE;
+-	if (!data->no_retune)
+-		host->mmc_host_ops.execute_tuning = sdhci_cdns_execute_tuning;
++	host->mmc_host_ops.execute_tuning = sdhci_cdns_execute_tuning;
+ 	host->mmc_host_ops.hs400_enhanced_strobe =
+ 				sdhci_cdns_hs400_enhanced_strobe;
+ 
+@@ -386,18 +388,18 @@ static int sdhci_cdns_probe(struct platform_device *pdev)
+ 	if (ret)
+ 		goto free;
+ 
+-	sdhci_cdns_phy_param_parse(dev->of_node, priv);
+-
+-	ret = sdhci_cdns_phy_init(priv);
+-	if (ret)
+-		goto free;
+-
+ 	if (data->init) {
+ 		ret = data->init(pdev);
+ 		if (ret)
+ 			goto free;
+ 	}
+ 
++	sdhci_cdns_phy_param_parse(dev->of_node, priv);
++
++	ret = sdhci_cdns_phy_init(priv);
++	if (ret)
++		goto free;
++
+ 	ret = sdhci_add_host(host);
+ 	if (ret)
+ 		goto free;
+diff --git a/drivers/mmc/host/sdhci-cadence.h b/drivers/mmc/host/sdhci-cadence.h
+index 4f52efad8e42..4c6429b11f0b 100644
+--- a/drivers/mmc/host/sdhci-cadence.h
++++ b/drivers/mmc/host/sdhci-cadence.h
+@@ -23,8 +23,13 @@ struct sdhci_cdns_phy_param {
+ 
+ struct sdhci_cdns_priv {
+ 	void __iomem *hrs_addr;
+-	void __iomem *ctl_addr;
++#ifdef CONFIG_MMC_SDHCI_CADENCE_ELBA
++	void __iomem *ctl_addr;	/* write control */
++	spinlock_t wrlock;	/* write lock */
++#endif
+ 	bool enhanced_strobe;
++	void (*priv_write_l)(struct sdhci_cdns_priv *priv,
++                u32 val, void __iomem *reg); /* for cadence-elba.c */
+ 	unsigned int nr_phy_params;
+ 	struct sdhci_cdns_phy_param phy_params[0];
+ };
+@@ -37,7 +42,6 @@ struct sdhci_cdns_phy_cfg {
+ struct sdhci_cdns_drv_data {
+ 	int (*init)(struct platform_device *pdev);
+ 	const struct sdhci_pltfm_data pltfm_data;
+-	int no_retune;
+ };
+ 
+ static inline void *sdhci_cdns_priv(struct sdhci_host *host)
+@@ -47,6 +51,22 @@ static inline void *sdhci_cdns_priv(struct sdhci_host *host)
+ 	return sdhci_pltfm_priv(pltfm_host);
+ }
+ 
++/*
++ * The Pensando Elba SoC explicitly controls byte-lane enables on writes,
++ * which includes writes to the HRS registers.
++ * sdhci_cdns_priv_writel() is used in the common sdhci-cadence.c code
++ * to write HRS registers, and this function dispatches to the specific
++ * code.
++ */
++static inline void sdhci_cdns_priv_writel(struct sdhci_cdns_priv *priv,
++		u32 val, void __iomem *reg)
++{
++	if (unlikely(priv->priv_write_l))
++		priv->priv_write_l(priv, val, reg);
++	else
++		writel(val, reg);
++}
++
+ #ifdef CONFIG_MMC_SDHCI_CADENCE_ELBA
+ extern const struct sdhci_cdns_drv_data sdhci_elba_drv_data;
+ #endif
+-- 
+2.17.1
+

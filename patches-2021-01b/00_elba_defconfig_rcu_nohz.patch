@@ -1,0 +1,27 @@
+From 2f2847107e79f49826afdf118a77c3449ce1f348 Mon Sep 17 00:00:00 2001
+From: David Clear <dac2@pensando.io>
+Date: Thu, 29 Oct 2020 13:52:37 -0700
+Subject: [PATCH] enable rcu callback offloading & adaptive tick mode to reduce
+ jitter
+
+Signed-off-by: David Clear <dac2@pensando.io>
+---
+ arch/arm64/configs/elba_defconfig | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/arch/arm64/configs/elba_defconfig b/arch/arm64/configs/elba_defconfig
+index 33331525d3b7..8e89facf48ea 100644
+--- a/arch/arm64/configs/elba_defconfig
++++ b/arch/arm64/configs/elba_defconfig
+@@ -4,7 +4,7 @@ CONFIG_SYSVIPC=y
+ CONFIG_POSIX_MQUEUE=y
+ CONFIG_AUDIT=y
+ CONFIG_GENERIC_IRQ_DEBUGFS=y
+-CONFIG_NO_HZ_IDLE=y
++CONFIG_NO_HZ_FULL=y
+ CONFIG_HIGH_RES_TIMERS=y
+ CONFIG_LOG_BUF_SHIFT=14
+ CONFIG_MEMCG=y
+-- 
+2.17.1
+

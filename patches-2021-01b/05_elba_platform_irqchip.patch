@@ -1,0 +1,2554 @@
+From 1237130b0e769477fdc4d6f21cffeeeaa84d456e Mon Sep 17 00:00:00 2001
+From: David Clear <dac2@pensando.io>
+Date: Wed, 27 Jan 2021 17:35:04 -0800
+Subject: [PATCH] Interrupt domain controllers for Elba ASIC.
+
+This supports using ASIC registers as IRQ chips, one per domain. The
+result is a many level interrupt controller. There are actually three
+different register blocks, each of which has its own configuration of
+enable and disable mechanisms.
+
+This version supports only the controllers required for the PCIe MAC
+status.
+
+The uio_pciemac MAC driver starts in the interrupt domain controller
+hierarchy at the pp_intr register.
+
+Signed-off-by: David Clear <dac2@pensando.io>
+---
+ arch/arm64/boot/dts/pensando/elba.dtsi |  46 ++
+ drivers/irqchip/Kconfig                |  11 +
+ drivers/irqchip/Makefile               |   1 +
+ drivers/irqchip/irq-pensando.c         | 877 +++++++++++++++++++++++++
+ drivers/uio/Kconfig                    |  33 +
+ drivers/uio/Makefile                   |   4 +
+ drivers/uio/uio_pciemac.c              |  28 +
+ drivers/uio/uio_pengic.c               | 675 +++++++++++++++++++
+ drivers/uio/uio_pengic.h               |  12 +
+ drivers/uio/uio_penmsi.c               | 592 +++++++++++++++++
+ drivers/uio/uio_penmsi.h               |  11 +
+ drivers/uio/uio_penmsi1.c              |  28 +
+ include/linux/irqchip/irq-pensando.h   |  93 +++
+ 13 files changed, 2411 insertions(+)
+ create mode 100644 drivers/irqchip/irq-pensando.c
+ create mode 100644 drivers/uio/uio_pciemac.c
+ create mode 100644 drivers/uio/uio_pengic.c
+ create mode 100644 drivers/uio/uio_pengic.h
+ create mode 100644 drivers/uio/uio_penmsi.c
+ create mode 100644 drivers/uio/uio_penmsi.h
+ create mode 100644 drivers/uio/uio_penmsi1.c
+ create mode 100644 include/linux/irqchip/irq-pensando.h
+
+diff --git a/arch/arm64/boot/dts/pensando/elba.dtsi b/arch/arm64/boot/dts/pensando/elba.dtsi
+index a7b0685d4ed4..7aefb4c8e342 100644
+--- a/arch/arm64/boot/dts/pensando/elba.dtsi
++++ b/arch/arm64/boot/dts/pensando/elba.dtsi
+@@ -79,6 +79,22 @@
+ 			};
+ 		};
+ 
++		/*
++ 		 * Until we  know the interrupt domain following this, we
++ 		 * are forced to use this is the place where interrupts from
++ 		 * PCI converge. In the ideal case, we use one domain higher,
++ 		 * where the PCI-ness has been shed.
++ 		 */
++		pxc0_intr: intc@20102200 {
++			compatible = "pensando,soc-ictlr-csrintr";
++			interrupt-controller;
++			reg = <0x0 0x20102200 0x0 0x4>;
++			#interrupt-cells = <3>;
++			interrupt-parent = <&gic>;
++			interrupts = <GIC_SPI 17 IRQ_TYPE_LEVEL_HIGH>;
++			interrupt-names = "pxc0_intr";
++		};
++
+ 		uart0: serial@4800 {
+ 			device_type = "serial";
+ 			compatible = "ns16550a";
+@@ -183,6 +199,36 @@
+ 			msi-parent = <&its 0x9>;
+ 		};
+ 
++		/* UIO device using interrupt line PCIEMAC */
++		pciemac {
++			#address-cells = <2>;
++			#size-cells = <2>;
++			#interrupt-cells = <3>;
++
++			compatible = "pensando,uio_pciemac";
++			register-type = "csr-interrupt";
++			interrupt-parent = <&pxc0_intr>;
++			interrupts = <GIC_SPI 0 IRQ_TYPE_LEVEL_HIGH>;
++			reg = <0x0 0x20102200 0x0 0x10>; /* pxc0_intr */
++
++			enable_csr_paddr = <0x0 0x20102200 0x0 0x10>;
++			enable_mask = <(1 << 0)>;
++		};
++
++		/* Common UIO device for MSI drivers */
++		uio_penmsi {
++			compatible = "pensando,uio_penmsi";
++			name = "uio_penmsi";
++		};
++
++		/* MSI UIO device 1 */
++		uio_penmsi1 {
++			compatible = "pensando,uio_penmsi1";
++			reg = <0x0 0x520000 0x0 0x10000>;
++			msi-parent = <&its 0xa>;
++			num-interrupts = <16>;  /* # MSI interrupts to get */
++		};
++
+ 		spics: spics@307c2468 {
+ 			compatible = "pensando,elba-spics";
+ 			reg = <0x0 0x307c2468 0x0 0x4>;
+diff --git a/drivers/irqchip/Kconfig b/drivers/irqchip/Kconfig
+index 9d8a1dd2e2c2..0fb9277c9f61 100644
+--- a/drivers/irqchip/Kconfig
++++ b/drivers/irqchip/Kconfig
+@@ -321,3 +321,14 @@ config IRQ_UNIPHIER_AIDET
+ 	select IRQ_DOMAIN_HIERARCHY
+ 	help
+ 	  Support for the UniPhier AIDET (ARM Interrupt Detector).
++
++config IRQ_PENSANDO
++	bool "Support for Pensando SOC IRQ chip structure"
++	depends on ARCH_PENSANDO_ELBA_SOC
++	default "y"
++	select IRQ_DOMAIN
++	select IRQ_DOMAIN_HIERARCHY
++	help
++	  This controls whether the Pensando IRQ chip code is used. This code
++	  works in sync with the SOC device tree to define the topology
++	  of devices controlling interrupts.
+diff --git a/drivers/irqchip/Makefile b/drivers/irqchip/Makefile
+index b842dfdc903f..02bc48a4a945 100644
+--- a/drivers/irqchip/Makefile
++++ b/drivers/irqchip/Makefile
+@@ -80,3 +80,4 @@ obj-$(CONFIG_ARCH_ASPEED)		+= irq-aspeed-vic.o irq-aspeed-i2c-ic.o
+ obj-$(CONFIG_STM32_EXTI) 		+= irq-stm32-exti.o
+ obj-$(CONFIG_QCOM_IRQ_COMBINER)		+= qcom-irq-combiner.o
+ obj-$(CONFIG_IRQ_UNIPHIER_AIDET)	+= irq-uniphier-aidet.o
++obj-$(CONFIG_IRQ_PENSANDO)		+= irq-pensando.o
+diff --git a/drivers/irqchip/irq-pensando.c b/drivers/irqchip/irq-pensando.c
+new file mode 100644
+index 000000000000..f07025393706
+--- /dev/null
++++ b/drivers/irqchip/irq-pensando.c
+@@ -0,0 +1,877 @@
++/*
++ * Pensando register-based hierarchical IRQ driver
++ *
++ * Copyright (C) 2019 Pensando, Inc.
++ *
++ * This program is free software; you can redistribute it and/or modify
++ * it under the terms of the GNU General Public License version 2 as
++ * published by the Free Software Foundation.
++ *
++ * Thanks to other irqchip developers!
++ *
++ * There are three types of registers in the Pensando Capri and Elba ASICs:
++ * o	csr - a particular device. This has enable set, enable clear, and
++ *	interrupt status registers
++ * o	group - a group of devices. This has an enable register and an
++ *	interrupt status register
++ * o	csrintr - module level interrupts. This has a single register with the
++ *	interrupt status at bit 0 and the enable at bit 1. The csrintr code
++ *	supports two or more address tuples, which are all considered for
++ *	interrupt enable, disable, and EOI processing.
++ *
++ * Items remaining to do:
++ * o	Make interrupts use two cells. Right now they have 3 with an
++ *	unnecessary leading GIC_SPI.
++ * o	Drop enable_csr_padddr and enable_mask:
++ *
++ *	a.	Change reg to have what is now in enable_csr_paddr be 
++ *		the first element, which will be the same as the current
++ *		value of enable_csr_paddr.
++ *	b.	The enable mask should be the same as 1 shifted left by
++ *		the second value in the interrupts property
++ *
++ *	Doing these, and documenting them, should make this easier to maintain.
++ */
++
++#define pr_fmt(fmt)	KBUILD_MODNAME	": " fmt
++
++#include <asm/stacktrace.h>
++#include <asm-generic/bitops/find.h>
++#include <linux/init.h>
++#include <linux/slab.h>
++#include <linux/module.h>
++#include <linux/kernel.h>
++#include <linux/platform_device.h>
++#include <linux/of.h>
++#include <linux/of_irq.h>
++#include <linux/of_address.h>
++#include <linux/of_platform.h>
++#include <linux/interrupt.h>
++#include <linux/irq.h>
++#include <linux/io.h>
++#include <linux/irqdomain.h>
++#include <linux/reboot.h>
++#include <linux/bitops.h>
++#include <linux/irqchip.h>
++#include <linux/irqchip/chained_irq.h>
++#include <linux/spinlock.h>
++#include <linux/irqchip/irq-pensando.h>
++#include <dt-bindings/interrupt-controller/arm-gic.h>
++#include <asm/stacktrace.h>
++
++#ifndef CHAR_BIT
++#define CHAR_BIT	8
++#endif
++
++/* Build in debugging messages in unmask_enable, eio, etc. functions */
++#undef TRACE_IRQ_DOMAIN_OPS
++
++#ifdef TRACE_IRQ_DOMAIN_OPS
++#define trace_irq_domain_ops(fmt, ...) pr_err("%s: " fmt, __func__, \
++	##__VA_ARGS__)
++#else
++#define trace_irq_domain_ops(fmt, ...) do { } while (false)
++#endif
++
++/* Maximum number of supported domains */
++#define MAX_DOMAINS	25
++
++#define MAX_N_IRQS_PER_CHIP	32
++
++/* Parameters for interpreting an irq_fwspec parsed from the device tree */
++#define IRQ_GIC_INTR_TYPE	0
++#define IRQ_FWSPEC_HWIRQ	1
++#define IRQ_FWSPEC_TYPE		2
++#define N_INTERRUPT_CELLS	3
++#define N_CHIP_TYPES		1		/* On a per-domain basis */
++
++struct domain_info {
++	unsigned		i;
++	struct irq_domain	*domain;
++};
++
++/*
++ * Control access to IRQ data
++ */
++static unsigned long info_irq_lock(struct pen_ictlr_info *info)
++{
++	unsigned long flags;
++
++	spin_lock_irqsave(&info->irq_lock, flags);
++	return flags;
++}
++
++static void info_irq_unlock(struct pen_ictlr_info *info, unsigned long flags)
++{
++	spin_unlock_irqrestore(&info->irq_lock, flags);
++}
++
++/*
++ * Interrupt functions with disjoint enable and disable registers.
++ *
++ * The following interrupt enable/disable functions are here for
++ * debugging only and should be replaced by the corresponding
++ * irq_gc* function.
++ */
++void pen_irq_unmask_enable_csr_one(struct irq_data *irq_data)
++{
++	struct irq_domain *domain;
++	struct pen_ictlr_info *info;
++	struct pen_ictlr_csr __iomem *data;
++	irq_hw_number_t hwirq;
++	u32 mask;
++
++	hwirq = irq_data->hwirq;
++	domain = irq_data->domain;
++	info = domain->host_data;
++	data = info->map_base[0];
++	mask = BIT(hwirq);
++	trace_irq_domain_ops("enable %s with %x\n", irq_data->domain->name,
++		mask);
++	writel(mask, &data->int_enable_set);
++}
++EXPORT_SYMBOL(pen_irq_unmask_enable_csr_one);
++
++void pen_irq_unmask_enable_csr(struct irq_data *irq_data)
++{
++	pen_irq_unmask_enable_csr_one(irq_data);
++	irq_chip_unmask_parent(irq_data);
++}
++
++void pen_irq_mask_disable_csr_one(struct irq_data *irq_data)
++{
++	struct irq_domain *domain;
++	struct pen_ictlr_info *info;
++	struct irq_chip *irq_chip;
++	void *chip_data;
++	struct pen_ictlr_csr __iomem *data;
++	irq_hw_number_t hwirq;
++	u32 mask;
++
++	hwirq = irq_data->hwirq;
++	domain = irq_data->domain;
++	irq_chip = irq_data->chip;
++	chip_data = irq_data->chip_data;
++	info = domain->host_data;
++	data = info->map_base[0];
++
++	mask = BIT(hwirq);
++	trace_irq_domain_ops("disable %s with %x\n", irq_data->domain->name,
++		mask);
++	writel(mask, &data->int_enable_clear);
++}
++EXPORT_SYMBOL(pen_irq_mask_disable_csr_one);
++
++void pen_irq_mask_disable_csr(struct irq_data *irq_data)
++{
++	pen_irq_mask_disable_csr_one(irq_data);
++	irq_chip_mask_parent(irq_data);
++}
++
++void pen_irq_eoi_csr(struct irq_data *irq_data)
++{
++	struct irq_domain *domain;
++	struct pen_ictlr_info *info;
++	struct pen_ictlr_csr __iomem *data;
++	irq_hw_number_t hwirq;
++	u32 mask;
++	u32 intreg_before;
++
++	trace_irq_domain_ops("eio %s\n", irq_data->domain->name);
++	hwirq = irq_data->hwirq;
++	domain = irq_data->domain;
++	info = domain->host_data;
++	data = info->map_base[0];
++
++	mask = BIT(hwirq);
++	intreg_before = readl(&data->intreg);
++	writel(mask, &data->intreg);
++	irq_chip_eoi_parent(irq_data);
++}
++
++/*
++ * Interrupt functions with enable and disable in the bit of the same
++ * register but a disjoint interrupt status register
++ *
++ * The following interrupt enable/disable functions are here for
++ * debugging only and should be replaced by the corresponding
++ * irq_gc* function.
++ */
++void pen_irq_unmask_enable_grp_one(struct irq_data *irq_data)
++{
++	struct irq_domain *domain;
++	struct pen_ictlr_info *info;
++	struct pen_ictlr_grp *data;
++	irq_hw_number_t hwirq;
++	unsigned long flags;
++	u32 enable, mask;
++
++	hwirq = irq_data->hwirq;
++	domain = irq_data->domain;
++	info = domain->host_data;
++	data = info->map_base[0];
++
++	mask = BIT(hwirq);
++
++	flags = info_irq_lock(info);
++	enable = readl(&data->intreg);
++	trace_irq_domain_ops("enable %s with %x\n", irq_data->domain->name,
++		enable | mask);
++	writel(enable | mask, &data->int_enable_rw_reg);
++	info_irq_unlock(info, flags);
++}
++EXPORT_SYMBOL(pen_irq_unmask_enable_grp_one);
++
++void pen_irq_unmask_enable_grp(struct irq_data *irq_data)
++{
++	pen_irq_unmask_enable_grp_one(irq_data);
++	irq_chip_unmask_parent(irq_data);
++}
++
++void pen_irq_mask_disable_grp_one(struct irq_data *irq_data)
++{
++	struct irq_domain *domain;
++	struct pen_ictlr_info *info;
++	struct pen_ictlr_grp *data;
++	irq_hw_number_t hwirq;
++	unsigned long flags;
++	u32 enable, mask;
++
++	hwirq = irq_data->hwirq;
++	domain = irq_data->domain;
++	info = domain->host_data;
++	info = domain->host_data;
++	data = info->map_base[0];
++
++	mask = BIT(hwirq);
++
++	flags = info_irq_lock(info);
++	enable = readl(&data->int_enable_rw_reg);
++	trace_irq_domain_ops("disable %s with %x\n", irq_data->domain->name,
++		enable & ~mask);
++	writel(enable & ~mask, &data->int_enable_rw_reg);
++	info_irq_unlock(info, flags);
++}
++EXPORT_SYMBOL(pen_irq_mask_disable_grp_one);
++
++void pen_irq_mask_disable_grp(struct irq_data *irq_data)
++{
++	pen_irq_mask_disable_grp_one(irq_data);
++	irq_chip_mask_parent(irq_data);
++}
++
++void pen_irq_eoi_grp(struct irq_data *irq_data)
++{
++	struct irq_domain *domain;
++	struct pen_ictlr_info *info;
++	struct pen_ictlr_grp *data;
++	irq_hw_number_t hwirq;
++	unsigned long flags;
++	u32 before, after;
++
++	hwirq = irq_data->hwirq;
++	domain = irq_data->domain;
++	info = domain->host_data;
++	data = info->map_base[0];
++
++	flags = info_irq_lock(info);
++
++	/* No state here, so we just invoke the parent */
++	before = readl(&data->int_enable_rw_reg);
++	irq_chip_eoi_parent(irq_data);
++	after = readl(&data->int_enable_rw_reg);
++	info_irq_unlock(info, flags);
++	trace_irq_domain_ops("eio %s before %x after %x\n",
++		irq_data->domain->name, before, after);
++}
++
++/*
++ * Interrupt functions with enable and disable in one bit of the same
++ * register as the interrupt status bit
++ *
++ * The following interrupt enable/disable functions are here for
++ * debugging only and should be replaced by the corresponding
++ * irq_gc* function.
++ */
++void pen_irq_unmask_enable_csrintr_one(struct irq_data *irq_data)
++{
++	struct irq_domain *domain;
++	struct pen_ictlr_info *info;
++	struct pen_ictlr_csrintr *data;
++	irq_hw_number_t hwirq;
++	unsigned long flags;
++	u32 mask;
++	u32 enable;
++	unsigned i;
++
++	hwirq = irq_data->hwirq;
++	domain = irq_data->domain;
++	info = domain->host_data;
++	mask = BIT(1);
++
++	flags = info_irq_lock(info);
++
++	for (i = 0; i < info->num_bases; i++) {
++		data = info->map_base[i];
++		enable = readl(&data->intr);
++		trace_irq_domain_ops("enable %s (base #%u) with %x\n",
++			irq_data->domain->name, i, enable | mask);
++		writel(enable | mask, &data->intr);
++	}
++
++	info_irq_unlock(info, flags);
++}
++EXPORT_SYMBOL(pen_irq_unmask_enable_csrintr_one);
++
++void pen_irq_unmask_enable_csrintr(struct irq_data *irq_data)
++{
++	pen_irq_unmask_enable_csrintr_one(irq_data);
++	irq_chip_unmask_parent(irq_data);
++}
++
++void pen_irq_mask_disable_csrintr_one(struct irq_data *irq_data)
++{
++	struct irq_domain *domain;
++	struct pen_ictlr_info *info;
++	struct pen_ictlr_csrintr *data;
++	irq_hw_number_t hwirq;
++	unsigned long flags;
++	u32 mask;
++	u32 enable;
++	unsigned i;
++
++	hwirq = irq_data->hwirq;
++	domain = irq_data->domain;
++	info = domain->host_data;
++	mask = BIT(1);
++
++	flags = info_irq_lock(info);
++
++	for (i = 0; i < info->num_bases; i++) {
++		data = info->map_base[i];
++		enable = readl(&data->intr);
++		trace_irq_domain_ops("disable %s (base #%u) with %x\n",
++			irq_data->domain->name, i, enable & ~mask);
++		writel(enable & ~mask, &data->intr);
++	}
++
++	info_irq_unlock(info, flags);
++}
++EXPORT_SYMBOL(pen_irq_mask_disable_csrintr_one);
++
++void pen_irq_mask_disable_csrintr(struct irq_data *irq_data)
++{
++	pen_irq_mask_disable_csrintr_one(irq_data);
++	irq_chip_mask_parent(irq_data);
++}
++
++/*
++ * We don't need to do any real work here, just report debugging info
++ */
++void pen_irq_eoi_csrintr(struct irq_data *irq_data)
++{
++	struct irq_domain *domain;
++	struct pen_ictlr_info *info;
++	struct pen_ictlr_csrintr *data;
++	irq_hw_number_t hwirq;
++	unsigned long flags;
++	u32 before, after;
++	unsigned i;
++
++	hwirq = irq_data->hwirq;
++	domain = irq_data->domain;
++	info = domain->host_data;
++	flags = info_irq_lock(info);
++
++	/* No state here, so we just invoke the parent */
++	for (i = 0; i < info->num_bases; i++) {
++		data = info->map_base[i];
++		before = readl(&data->intr);
++
++		irq_chip_eoi_parent(irq_data);
++
++		after = readl(&data->intr);
++		trace_irq_domain_ops("eio %s (base #%u) before %x after %x\n",
++			irq_data->domain->name, i, before, after);
++	}
++	info_irq_unlock(info, flags);
++}
++
++static struct irq_chip pen_irq_chip_csr = {
++	.name =			"CSR",
++	.irq_mask =		pen_irq_mask_disable_csr,
++	.irq_unmask =		pen_irq_unmask_enable_csr,
++	.irq_eoi =		pen_irq_eoi_csr,
++	.irq_set_type =		irq_chip_set_type_parent,
++#ifdef CONFIG_SMP
++	.irq_set_affinity =	irq_chip_set_affinity_parent,
++#endif
++};
++
++static struct irq_chip pen_irq_chip_grp = {
++	.name =			"GRP",
++	.irq_mask =		pen_irq_mask_disable_grp,
++	.irq_unmask =		pen_irq_unmask_enable_grp,
++#ifdef TRACE_IRQ_DOMAIN_OPS
++	.irq_eoi =		pen_irq_eoi_grp,
++#else
++	.irq_eoi =		irq_chip_eoi_parent,
++#endif
++	.irq_set_type =		irq_chip_set_type_parent,
++#ifdef CONFIG_SMP
++	.irq_set_affinity =	irq_chip_set_affinity_parent,
++#endif
++};
++
++static struct irq_chip pen_irq_chip_csrintr = {
++	.name =			"CSRintr",
++	.irq_mask =		pen_irq_mask_disable_csrintr,
++	.irq_unmask =		pen_irq_unmask_enable_csrintr,
++#ifdef TRACE_IRQ_DOMAIN_OPS
++	.irq_eoi =		pen_irq_eoi_csrintr,
++#else
++	.irq_eoi =		irq_chip_eoi_parent,
++#endif
++	.irq_set_type =		irq_chip_set_type_parent,
++#ifdef CONFIG_SMP
++	.irq_set_affinity =	irq_chip_set_affinity_parent,
++#endif
++};
++
++/*
++ * Pull the hardware IRQ number from the device tree information
++ * Returns the zero if successful, otherwise a negative errno value
++ */
++static int extract_hwirq(struct irq_fwspec *fwspec, irq_hw_number_t *hwirq)
++{
++
++	/* Verify that the value from the interrupts property is correct */
++	if (fwspec->param_count != N_INTERRUPT_CELLS ||
++		fwspec->param[IRQ_GIC_INTR_TYPE] != GIC_SPI) {
++		pr_err("Invalid value for #interrupts property\n");
++		return -EINVAL;
++	}
++
++	*hwirq = fwspec->param[IRQ_FWSPEC_HWIRQ];
++	if (*hwirq >= MAX_N_IRQS_PER_CHIP) {
++		pr_err("Hardware interrupt number too big (>%lu)", *hwirq);
++		return -EINVAL;
++	}
++
++	return 0;
++}
++
++/*
++ * This will fill in the param_count and 3 elements of param of a
++ * struct irq_fwspec. It is narrowly tailored for this particular usage
++ * but could fairly easily be generalized.
++ *
++ * Returns 0 on success, or a negative errno on failure.
++ */
++static int pen_get_parent_fwspec(struct irq_domain *d,
++	struct irq_fwspec *fwspec)
++{
++	struct device_node *device;
++	struct device_node *parent;
++	struct pen_ictlr_info *info;
++	u32 intsize;
++	unsigned i;
++	int err;
++
++	info = d->host_data;
++	device = info->dn;
++
++	/* Look for the interrupt parent. */
++	parent = of_irq_find_parent(device);
++	if (parent == NULL) {
++		err = -EINVAL;
++		goto out;
++	}
++
++	/* Get size of interrupt specifier */
++	if (of_property_read_u32(parent, "#interrupt-cells", &intsize)) {
++		err = -EINVAL;
++		goto out;
++	}
++
++	/* This is not a general solution, fail if it's not one we can do */
++	if (intsize != N_INTERRUPT_CELLS) {
++		err = -ENOSYS;
++		goto out;
++	}
++
++	fwspec->param_count = N_INTERRUPT_CELLS;
++	for (i = 0; i < intsize; i++) {
++		err = of_property_read_u32_index(device, "interrupts", i,
++			&fwspec->param[i]);
++		if (err != 0)
++			goto out;
++	}
++
++	fwspec->param_count = intsize;
++
++	return 0;
++
++out:
++	of_node_put(parent);
++	return err;
++}
++
++/*
++ * Translate from a value in the device tree interrupts property to a
++ * hardware IRQ number.
++ * @d:		Domain for which translation should be done
++ * @fwspec:	Hardware IRQ information from the device tree for this
++ *		domain
++ * @out_hwirq:	Pointer to place to store the lowest supported hardware IRQ
++ * @out_type:	Pointer to the type of interrupt, e.g. edge, or level triggered
++ */
++static int pen_irq_domain_translate(struct irq_domain *d,
++	struct irq_fwspec *fwspec, irq_hw_number_t *out_hwirq,
++	unsigned int *out_type)
++{
++	if (is_of_node(fwspec->fwnode)) {
++		irq_hw_number_t hwirq;
++		int rc;
++
++		rc = extract_hwirq(fwspec, &hwirq);
++		if (rc != 0)
++			return rc;
++
++		*out_hwirq = hwirq;
++		*out_type = fwspec->param[IRQ_FWSPEC_TYPE] &
++			IRQ_TYPE_SENSE_MASK;
++		return 0;
++	}
++
++	return -EINVAL;
++}
++
++/*
++ * Recursively allocate the IRQ structures for this domain, using information
++ * provided in the device tree
++ * @d:		Domain for which IRQ information should be added
++ * @virq:	Lowest available kernel IRQ number
++ * @nr_irqs:	Number of IRQs to allocate
++ * @fw_data:	Hardware IRQ information for this domain
++ */
++static int pen_irq_domain_alloc(struct irq_domain *d, unsigned int virq,
++	unsigned int nr_irqs, void *fw_data)
++{
++	struct irq_fwspec *fwspec = fw_data;
++	struct irq_fwspec parent_fwspec;
++	struct pen_ictlr_info *info;
++	irq_hw_number_t hwirq;
++	unsigned i;
++	int rc;
++
++	rc = extract_hwirq(fwspec, &hwirq);
++	if (rc != 0)
++		return rc;
++
++	/* Create the irq structure */
++	info = d->host_data;
++	for (i = 0; i < nr_irqs; i++) {
++		rc = irq_domain_set_hwirq_and_chip(d, virq + i, hwirq + i,
++			info->irq_chip, info);
++		if (rc != 0) {
++			pr_err("irq_domain_set_hwirq_and_chipd failed: %d\n",
++				rc);
++			return rc;
++		}
++	}
++
++	/* Set up the parent information */
++	rc = pen_get_parent_fwspec(d, &parent_fwspec);
++	parent_fwspec.fwnode = d->parent->fwnode;
++
++	rc = irq_domain_alloc_irqs_parent(d, virq, nr_irqs, &parent_fwspec);
++
++	return rc;
++}
++
++static void pen_irq_domain_free(struct irq_domain *d, unsigned int virq,
++				unsigned int nr_irqs)
++{
++	struct irq_data *data = irq_domain_get_irq_data(d, virq);
++
++	irq_domain_reset_irq_data(data);
++}
++
++static struct irq_domain_ops pen_irq_domain_generic_chip_ops = {
++	.translate =	pen_irq_domain_translate,
++	.alloc =	pen_irq_domain_alloc,
++	.free =		pen_irq_domain_free,
++};
++
++/*
++ * Handle mapping I/O of a device register block
++ */
++static int __init pen_ictlr_iomap_csr(struct device_node *dn,
++				     struct pen_ictlr_info *info)
++{
++	if (info->num_bases != 1) {
++		pr_err("%pOF: reg property needs one tuple but has %u\n",
++			dn, info->num_bases);
++		return -EIO;
++	}
++
++	info->map_base[0] = of_iomap(dn, 0);
++	if (info->map_base[0] == NULL) {
++		pr_err("unable to map registers\n");
++		return -ENOMEM;
++	}
++
++	return 0;
++}
++
++/*
++ * Handle mapping I/O of a group register block
++ */
++static int __init pen_ictlr_iomap_grp(struct device_node *dn,
++				     struct pen_ictlr_info *info)
++{
++	if (info->num_bases != 1) {
++		pr_err("%pOF: reg property needs one tuple but has %u\n",
++			dn, info->num_bases);
++		return -EIO;
++	}
++
++	info->map_base[0] = of_iomap(dn, 0);
++	if (info->map_base[0] == NULL) {
++		pr_err("unable to map registers\n");
++		return -ENOMEM;
++	}
++
++	return 0;
++}
++
++/*
++ * Handle mapping I/O of a device register block
++ */
++static int __init pen_ictlr_iomap_csrintr(struct device_node *dn,
++					     struct pen_ictlr_info *info)
++{
++	unsigned i;
++
++	if (info->num_bases < 1) {
++		pr_err("%pOF: reg property needs at least one tuple, has %u\n",
++			dn, info->num_bases);
++		return -EIO;
++	}
++
++	for (i = 0; i < info->num_bases; i++) {
++		info->map_base[i] = of_iomap(dn, i);
++		if (info->map_base[i] == NULL)
++			break;
++	}
++
++	if (i != info->num_bases) {
++		pr_err("only mapped %u of %u regions\n", i, info->num_bases);
++		return -ENOMEM;
++	}
++
++	return 0;
++}
++
++static struct pen_ictlr_info *__init pen_ictlr_probe(struct device_node *dn,
++	 struct device_node *parent, enum reg_type reg_type,
++	 int (*of_iomap_fn)(struct device_node *, struct pen_ictlr_info *),
++	 void (*set_irq_chip_info)(struct irq_chip_type *ct),
++	 struct irq_chip *irq_chip)
++{
++	struct irq_domain *parent_domain;
++	struct pen_ictlr_info *info;
++	unsigned num_bases;
++	unsigned info_size;
++	int ret = 0;
++
++	pr_info("Probe IRQ domain controller %s\n", dn->full_name);
++	
++	if (parent == NULL) {
++		pr_err("%pOF has no device node parent\n", dn);
++		return ERR_PTR(-ENODEV);
++	}
++
++	parent_domain = irq_find_host(parent);
++	if (parent_domain == NULL) {
++		pr_err("%pOF has no domain parent\n", dn);
++		return ERR_PTR(-ENXIO);
++	}
++
++	/* Count the number of mapped areas */
++	num_bases = 0;
++	for (num_bases = 0; of_get_address(dn, num_bases, NULL, NULL) != NULL;
++		num_bases++)
++		{}
++	if (num_bases == 0) {
++		pr_err("no addresses found in reg property for %pOF\n",
++			dn);
++		return ERR_PTR(ENXIO);
++	}
++
++	/* Allocate a struct pen_ictlr_info and add on space for the
++	 * mapped addresses at the end */
++	info_size = offsetof(struct pen_ictlr_info, map_base[num_bases]);
++	info = kzalloc(info_size, GFP_KERNEL);
++	if (info == NULL)
++		return ERR_PTR(-ENOMEM);
++	info->num_bases = num_bases;
++
++	/* Set up the mapping to the register block */
++	ret = of_iomap_fn(dn, info);
++	if (ret != 0) {
++		pr_err("Unable to map register block\n");
++		goto out_free_info;
++	}
++
++	/* Create a new domain with a linear IRQ mapping */
++	info->reg_type = reg_type;
++	info->irq_chip = irq_chip;
++	info->domain = irq_domain_add_hierarchy(parent_domain, 0,
++		MAX_N_IRQS_PER_CHIP, dn, &pen_irq_domain_generic_chip_ops,
++		info);
++	if (info->domain == NULL) {
++		pr_err("Unable to create pensando soc domain\n");
++		ret = -ENOMEM;
++		goto out_unmap_regs;
++	}
++
++	info->dn = dn;
++
++	spin_lock_init(&info->irq_lock);
++
++	return info;
++
++out_unmap_regs:
++	if (info->map_base)
++		iounmap(info->map_base);
++
++out_free_info:
++	kfree(info);
++	return ERR_PTR(ret);
++}
++
++static void set_irq_chip_info_csr(struct irq_chip_type *ct)
++{
++	ct->chip.irq_mask = pen_irq_mask_disable_csr;
++	ct->chip.irq_unmask = pen_irq_unmask_enable_csr;
++
++	ct->regs.enable = offsetof(struct pen_ictlr_csr, int_enable_set);
++	ct->regs.disable = offsetof(struct pen_ictlr_csr, int_enable_set);
++	ct->regs.ack = offsetof(struct pen_ictlr_csr, intreg);
++
++	ct->chip.irq_ack = irq_gc_noop;
++}
++
++static void set_irq_chip_info_grp(struct irq_chip_type *ct)
++{
++	ct->chip.irq_mask = pen_irq_mask_disable_grp;
++	ct->chip.irq_unmask = pen_irq_unmask_enable_grp;
++
++	ct->regs.enable = offsetof(struct pen_ictlr_grp, int_enable_rw_reg);
++	ct->regs.disable = offsetof(struct pen_ictlr_grp,
++		int_enable_rw_reg);
++	ct->regs.ack = offsetof(struct pen_ictlr_grp, intreg);
++
++	ct->chip.irq_ack = irq_gc_noop;
++}
++
++static void set_irq_chip_info_csrintr(struct irq_chip_type *ct)
++{
++	ct->chip.irq_mask = pen_irq_mask_disable_csrintr;
++	ct->chip.irq_unmask = pen_irq_unmask_enable_csrintr;
++
++	ct->regs.enable = offsetof(struct pen_ictlr_csrintr, intr);
++	ct->regs.disable = offsetof(struct pen_ictlr_csrintr, intr);
++	ct->regs.ack = offsetof(struct pen_ictlr_csrintr, intr);
++
++	ct->chip.irq_ack = irq_gc_noop;
++}
++
++static int __init pen_ictlr_probe_csr(struct device_node *dn,
++	 struct device_node *parent,
++	 int (*iomap_fn)(struct device_node *,
++		 struct pen_ictlr_info *), struct irq_chip *irq_chip,
++	const char *intc_name)
++{
++	struct pen_ictlr_info *info;
++	int ret = 0;
++
++	info = pen_ictlr_probe(dn, parent, REG_TYPE_CSR, iomap_fn,
++		set_irq_chip_info_csr, &pen_irq_chip_csr);
++	if (IS_ERR(info))
++		return PTR_ERR(info);
++
++	return ret;
++}
++
++static int __init pen_ictlr_probe_grp(struct device_node *dn,
++	 struct device_node *parent,
++	 int (*iomap_fn)(struct device_node *,
++		 struct pen_ictlr_info *), struct irq_chip *irq_chip,
++	 const char *intc_name)
++{
++	struct pen_ictlr_info *info;
++	int ret = 0;
++
++	info = pen_ictlr_probe(dn, parent, REG_TYPE_GRP, iomap_fn,
++		set_irq_chip_info_grp, &pen_irq_chip_grp);
++	if (IS_ERR(info))
++		return PTR_ERR(info);
++
++	return ret;
++}
++
++static int __init pen_ictlr_probe_csrintr(struct device_node *dn,
++	 struct device_node *parent,
++	 int (*iomap_fn)(struct device_node *,
++		 struct pen_ictlr_info *), struct irq_chip *irq_chip,
++	 const char *intc_name)
++{
++	struct pen_ictlr_info *info;
++
++	info = pen_ictlr_probe(dn, parent, REG_TYPE_CSRINTR, iomap_fn,
++		set_irq_chip_info_csrintr, &pen_irq_chip_csrintr);
++	if (IS_ERR(info))
++		return PTR_ERR(info);
++
++	return 0;
++}
++
++/* Probe for device-level interrupts */
++static int __init soc_probe_csr(struct device_node *dn,
++				     struct device_node *parent)
++{
++	pr_info("Probe %pOF\n", dn);
++	return pen_ictlr_probe_csr(dn, parent,
++		pen_ictlr_iomap_csr, &pen_irq_chip_csr,
++		"Pensando SOC CSR");
++}
++
++/* Probe for group-level interrupts */
++static int __init soc_probe_grp(struct device_node *dn,
++				     struct device_node *parent)
++{
++	pr_info("Probe %pOF\n", dn);
++	return pen_ictlr_probe_grp(dn, parent,
++		pen_ictlr_iomap_grp, &pen_irq_chip_grp,
++		"Pensando SOC GRP");
++}
++
++/* Probe for module-level interrupts */
++static int __init soc_probe_csrintr(struct device_node *dn,
++				     struct device_node *parent)
++{
++	pr_info("Probe %pOF\n", dn);
++	return pen_ictlr_probe_csrintr(dn, parent,
++		pen_ictlr_iomap_csrintr, &pen_irq_chip_csrintr,
++		"Pensando SOC CSR Intr");
++}
++
++IRQCHIP_DECLARE(soc_ictlr_csr, "pensando,soc-ictlr-csr",
++	soc_probe_csr);
++IRQCHIP_DECLARE(soc_ictlr_grp, "pensando,soc-ictlr-grp",
++	soc_probe_grp);
++IRQCHIP_DECLARE(soc_ictlr_csrintr, "pensando,soc-ictlr-csrintr",
++	soc_probe_csrintr);
+diff --git a/drivers/uio/Kconfig b/drivers/uio/Kconfig
+index 7e8dc78a9796..218597fca1da 100644
+--- a/drivers/uio/Kconfig
++++ b/drivers/uio/Kconfig
+@@ -164,4 +164,37 @@ config UIO_HV_GENERIC
+ 	  to network and storage devices from userspace.
+ 
+ 	  If you compile this as a module, it will be called uio_hv_generic.
++
++config UIO_PCIEMAC
++	tristate "Include PCI MAC status driver"
++	default "y"
++	select UIO_PENGIC
++	depends on ARCH_PENSANDO_ELBA_SOC
++	help
++	  Driver that allows handling of ring2 on Pensando Elba systems. It
++	  is useful for having a userspace driver that can handle GIC 17
++	  interrupts.
++
++	  If you compile this as a module, it will be called uio_pciemac.
++
++config UIO_PENMSI1
++	tristate "Driver 1 for MSI"
++	default "y"
++	select UIO_PENMSI
++	depends on ARCH_PENSANDO_ELBA_SOC
++	help
++	  Driver that allows obtaining MSI data and handling MSI interrupts
++	  in userspace.
++
++	  If you compile this as a module, it will be called uio_pengmsi1.
++
++config UIO_PENGIC
++	tristate
++	depends on ARCH_PENSANDO
++	default n
++
++config UIO_PENMSI
++	tristate
++	depends on ARCH_PENSANDO
++	default n
+ endif
+diff --git a/drivers/uio/Makefile b/drivers/uio/Makefile
+index c285dd2a4539..7e1b793674a1 100644
+--- a/drivers/uio/Makefile
++++ b/drivers/uio/Makefile
+@@ -11,3 +11,7 @@ obj-$(CONFIG_UIO_PRUSS)         += uio_pruss.o
+ obj-$(CONFIG_UIO_MF624)         += uio_mf624.o
+ obj-$(CONFIG_UIO_FSL_ELBC_GPCM)	+= uio_fsl_elbc_gpcm.o
+ obj-$(CONFIG_UIO_HV_GENERIC)	+= uio_hv_generic.o
++obj-$(CONFIG_UIO_PENGIC)	+= uio_pengic.o
++obj-$(CONFIG_UIO_PCIEMAC)	+= uio_pciemac.o
++obj-$(CONFIG_UIO_PENMSI)	+= uio_penmsi.o
++obj-$(CONFIG_UIO_PENMSI1)	+= uio_penmsi1.o
+diff --git a/drivers/uio/uio_pciemac.c b/drivers/uio/uio_pciemac.c
+new file mode 100644
+index 000000000000..358cbdba31ac
+--- /dev/null
++++ b/drivers/uio/uio_pciemac.c
+@@ -0,0 +1,28 @@
++#include <linux/module.h>
++
++#include "uio_pengic.h"
++
++#define DRIVER_NAME_PCIEMAC	"uio_pciemac0"
++
++#ifdef CONFIG_OF
++static const struct of_device_id pengic_match[] = {
++	{ .compatible = "pensando,uio_pciemac" },
++	{ /* Mark the end of the list */ },
++};
++#endif
++
++static struct platform_driver uio_pciemac = {
++	.probe = pengic_probe_enable,
++	.remove = pengic_remove,
++	.driver = {
++		.name = DRIVER_NAME_PCIEMAC,
++		.pm = &pengic_pm_ops,
++		.of_match_table = of_match_ptr(pengic_match),
++	}
++};
++
++module_platform_driver(uio_pciemac);
++
++MODULE_LICENSE("GPL v2");
++MODULE_DESCRIPTION("Support PCIe MAC status reporting");
++MODULE_AUTHOR("David VomLehn");
+diff --git a/drivers/uio/uio_pengic.c b/drivers/uio/uio_pengic.c
+new file mode 100644
+index 000000000000..1c5529e56b05
+--- /dev/null
++++ b/drivers/uio/uio_pengic.c
+@@ -0,0 +1,675 @@
++/*
++ * UIO driver for the device using the GIC interrupts for the Pensando
++ * Elba ASIC. This includes status/error registers.
++ *
++ * To do:
++ * o	Get enable_csr from the "reg" property
++ * o	Get enable_mask from the device nodes "interrupts" property 
++ */
++
++#include <linux/dma-mapping.h>
++#include <linux/interrupt.h>
++#include <linux/io.h>
++#include <linux/irq.h>
++#include <linux/module.h>
++#include <linux/of.h>
++#include <linux/of_address.h>
++#include <linux/of_irq.h>
++#include <linux/platform_data/uio_dmem_genirq.h>
++#include <linux/platform_device.h>
++#include <linux/pm_runtime.h>
++#include <linux/slab.h>
++#include <linux/spinlock.h>
++#include <linux/uio_driver.h>
++#include <linux/atomic.h>
++#include <linux/irqchip/irq-pensando.h>
++
++/* Probably should be defined in irq.h, but isn't */
++#define NO_IRQ		0
++
++#define MAP_ERROR	(~0)		/* Invalid address */
++
++/*
++ * If set, will print a status message from the IRQ handler. This can be
++ * very helpful when trying to determine whether the device tree has the
++ * correct parent/child structure
++ */
++#undef PRINT_HANDLER_STATUS
++
++#ifdef PRINT_HANDLER_STATUS
++#define handler_status(fmt, ...) pr_err(fmt, ##__VA_ARGS__)
++#else
++#define handler_status(fmt, ...) do { } while (false)
++#endif
++
++/*
++ * pengic_platdata - platform data for one UIO device
++ * @name:		Name of the driver
++ * @reg_type:		Type of register block we're dealing with
++ * @flags:
++ * @pdev:		Pointer to struct platform_device
++ * @n_res:		Number of entries in @res[] used
++ * @res:		Struct resource that defines the address and size of
++ *			the CSR
++ * @node:		Pointer to the open firmware device node for this
++ *			device;
++ * @enable_mask:	Mask of bits to be set to enable the interrupt(s)
++ * @enable_csr:		Virtual address of the pen_ictlr_csr for this child
++ * @uio_info:		Pointer to the associated struct uio_info
++ * @dev:		Pointer to the struct device for this device
++ * @cmd:		Information for the command file
++ * @pengic_dir:		Pointer to information about the pengic directory
++ *			in which the command file lives
++ * @irq:		Kernel interrupt number
++ * @disables_lock:	Spin lock protecting the @disables member
++ * @disable:		Number of outstanding disables. Incremented for
++ *			each disable call, decremented for each enable call
++ */
++struct pengic_platdata {
++	const char		*name;
++	enum reg_type		reg_type;
++	unsigned long		flags;
++	unsigned		n_res;
++	struct resource		res[MAX_UIO_MAPS];
++	struct device_node	*node;
++	u32			enable_mask;
++	struct pen_ictlr_csr	*enable_csr;
++	struct uio_info		*uio_info;
++	struct device		*dev;
++	unsigned int		irq;
++};
++
++static void pengic_enable_intr_nolock(struct pengic_platdata *platdata)
++{
++	struct irq_desc *desc;
++	struct irq_data *irq_data;
++
++	desc = irq_to_desc(platdata->irq);
++	irq_data = &desc->irq_data;
++
++	switch (platdata->reg_type) {
++	case REG_TYPE_CSR:
++		pen_irq_unmask_enable_csr_one(irq_data);
++		break;
++
++	case REG_TYPE_GRP:
++		pen_irq_unmask_enable_grp_one(irq_data);
++		break;
++
++	case REG_TYPE_CSRINTR:
++		pen_irq_unmask_enable_csrintr_one(irq_data);
++		break;
++
++	default:
++		pr_err("%pOF: Unknown register type: %d\n",
++			platdata->node, platdata->reg_type);
++		break;
++	}
++
++}
++
++/*
++ * Enable the register in the bottom-most interrupt domain controller. We
++ * only call the real enable function when we have zero outstanding
++ * disables.
++ *
++ * It's ugly that this calls directly into functions for the interrupt
++ * domain controller but it's either that or duplicate code.
++ */
++static void pengic_enable_intr(struct pengic_platdata *platdata)
++{
++	pengic_enable_intr_nolock(platdata);
++}
++
++static void pengic_disable_intr_nolock(struct pengic_platdata *platdata)
++{
++	struct irq_desc *desc;
++	struct irq_data *irq_data;
++
++	desc = irq_to_desc(platdata->irq);
++	irq_data = &desc->irq_data;
++
++	/*
++	 * If this is the first disable call, actually do the disable.
++	 * Otherwise, we are already disabled and skip the call
++	 */
++	switch (platdata->reg_type) {
++	case REG_TYPE_CSR:
++		pen_irq_mask_disable_csr_one(irq_data);
++		break;
++
++	case REG_TYPE_GRP:
++		pen_irq_mask_disable_grp_one(irq_data);
++		break;
++
++	case REG_TYPE_CSRINTR:
++		pen_irq_mask_disable_csrintr_one(irq_data);
++		break;
++
++	default:
++		pr_err("Unknown register type: %d\n",
++			platdata->reg_type);
++		break;
++	}
++}
++
++static void pengic_disable_intr(struct pengic_platdata *platdata)
++{
++	pengic_disable_intr_nolock(platdata);
++}
++
++static int pengic_open(struct uio_info *uioinfo, struct inode *inode)
++{
++	struct pengic_platdata *platdata;
++	int ret;
++
++	ret = 0;
++	platdata = uioinfo->priv;
++	pm_runtime_get_sync(platdata->dev);
++
++	return ret;
++}
++
++/*
++ * pengic_release - called when the device has no more open file descriptors
++ *	and it was enough to use end-of-interrupt handling
++ */
++static int pengic_release(struct uio_info *uioinfo, struct inode *inode)
++{
++	struct pengic_platdata *platdata;
++
++	platdata = uioinfo->priv;
++	pm_runtime_put_sync(platdata->dev);
++
++	return 0;
++}
++
++/*
++ * pengic_release_enable - called when the device has no more open file
++ *	descriptors when the interrupt had to be disabled in addition to
++ *	performing end-of-interrupt processing. This ensures that the
++ *	interrupt is enabled on exit.
++ */
++static int pengic_release_enable(struct uio_info *uioinfo, struct inode *inode)
++{
++	struct pengic_platdata *platdata;
++	int rc;
++
++	platdata = uioinfo->priv;
++
++#ifdef FORCE_ENABLE_ON_RELEASE
++	/*
++	 * If the interupt chain is disabled, enable it
++	 *
++	 * No need to lock here, there is nobody else contending for this
++	 * data structure
++	 */
++	if (platdata->disables != 0)
++		pengic_enable_intr_nolock(platdata);
++#endif
++	rc = pengic_release(uioinfo, inode);
++
++	return rc;
++}
++
++/*
++ * Read the register where bits are set when interrupts happen. Note that
++ * an undefined reg_type will cause a zero to be returned, which will
++ * cause an IRQ_NONE to be returned to the caller of the IRQ handler.
++ */
++static uint32_t pengic_read_status(enum reg_type reg_type, void *p)
++{
++	uint32_t intr_status;
++
++	switch (reg_type) {
++	case REG_TYPE_CSR:
++		intr_status = readl(&((struct pen_ictlr_csr *)p)->intreg);
++		break;
++
++	case REG_TYPE_GRP:
++		intr_status = readl(&((struct pen_ictlr_grp *)p)->intreg);
++		break;
++
++	case REG_TYPE_CSRINTR:
++		intr_status = readl(&((struct pen_ictlr_csrintr *)p)->intr);
++		break;
++
++	default:
++		intr_status = 0;	/* Always causes IRQ_NONE */
++		break;
++	}
++
++	return intr_status;
++}
++
++/*
++ * Handle an IRQ assuming the default EOI processing is sufficient to
++ * renable the interrupt.
++ */
++static irqreturn_t pengic_handler(int virq, struct uio_info *uioinfo)
++{
++	struct pengic_platdata *platdata;
++	struct irq_desc *irq_desc;
++	u32 intr_status, enable_mask;
++	irq_hw_number_t hwirq;
++	unsigned i;
++
++	platdata = uioinfo->priv;
++	irq_desc = irq_to_desc(virq);
++	hwirq = irq_desc->irq_data.hwirq;
++	enable_mask = 1 << hwirq;
++	
++	for (i = 0; i < platdata->n_res; i++) {
++		void *p;
++
++		p = uioinfo->mem[i].internal_addr + uioinfo->mem[i].offs;
++		intr_status = pengic_read_status(platdata->reg_type, p);
++		if ((intr_status & enable_mask) != 0)
++			return IRQ_HANDLED;	/* This is our interrupt */
++	}
++
++	return IRQ_NONE;
++}
++
++/*
++ * Handle an IRQ assuming the default EOI processing is insufficient to
++ * renable the interrupt. Instead, the interrupt is disabled here and enabled
++ * through the irqcontrol function invoked from userspace via write().
++ */
++static irqreturn_t pengic_handler_disable(int virq, struct uio_info *uioinfo)
++{
++	irqreturn_t rc;
++
++	rc = pengic_handler(virq, uioinfo);
++	if (rc == IRQ_HANDLED) {
++		struct pengic_platdata *platdata;
++		platdata = uioinfo->priv;
++		pengic_disable_intr(platdata);
++	}
++
++	return rc;
++}
++
++/* Unmap the first n elements */
++static void unmap_asic(struct uio_info *uioinfo, unsigned n, struct device *dev)
++{
++	unsigned i;
++
++	for (i = 0; uioinfo->mem[i].size != 0; i++) {
++		struct uio_mem *mem;
++
++		mem = &uioinfo->mem[i];
++
++		if (mem->internal_addr == NULL) {
++			dev_warn(dev,
++				"mem[%td].internal_addr is unexpectdly NULL\n",
++				mem - uioinfo->mem);
++		} else {
++			iounmap(mem->internal_addr);
++			mem->internal_addr = NULL;	/* paranoia */
++		}
++
++		if (mem->name == NULL) {
++			dev_warn(dev, "mem[%td].name is unexpectdly NULL\n",
++				mem - uioinfo->mem);
++		} else {
++			kfree(mem->name);
++			mem->name = NULL;		/* More paranoia */
++		}
++	}
++}
++
++/*
++ * Returns the number of resources on success, otherwise a negative errno
++ * value
++ */
++static int map_asic(struct uio_info *uio_info, struct device *dev,
++	struct device_node *node, struct resource *res, unsigned n_res)
++{
++	unsigned i;
++	int ret;
++
++	for (i = 0; i < n_res; i++) {
++		struct uio_mem *mem;
++		size_t unrounded_size;
++		size_t rounded_size;
++
++		ret = of_address_to_resource(node, i, &res[i]);
++		if (ret != 0)
++			break;
++
++		mem = &uio_info->mem[i];
++
++		/* Offset with the page in which the device registers reside */
++		mem->offs = res[i].start & ~PAGE_MASK;
++		/* Physical address, aligned on a page boundary */
++		mem->addr = res[i].start - mem->offs;
++		if (node->name != NULL)
++			mem->name = kstrdup(node->name, GFP_KERNEL);
++
++		/*
++		 * Size of an area completely containing the device registers
++		 * of interest. Must be multiple of the page size
++		 * */
++		unrounded_size = mem->offs + resource_size(res);
++		rounded_size = (unrounded_size + (PAGE_SIZE - 1)) & PAGE_MASK;
++		mem->size = rounded_size;
++
++		/* Specify we have physical memory, then map it */
++		mem->memtype = UIO_MEM_PHYS;
++		mem->internal_addr = ioremap(mem->addr, mem->size);
++
++		if (mem->internal_addr == NULL)
++			break;
++	}
++
++	return i;
++}
++
++static int pengic_irqcontrol(struct uio_info *info, s32 irq_on)
++{
++	struct pengic_platdata *platdata;
++
++	platdata = info->priv;
++
++	switch (irq_on) {
++	case 0:
++		pengic_disable_intr(platdata);
++		break;
++	
++	case 1:
++		pengic_enable_intr(platdata);
++		break;
++	
++	default:
++		return -EINVAL;
++		break;
++	}
++
++	return 0;
++}
++
++static int set_uio_info(struct uio_info *uio_info,
++	struct device *dev, struct device_node *node,
++	irqreturn_t (*pengic_handler)(int irq, struct uio_info *uioinfo))
++{
++	const char *dt_name;
++	int irq;
++	int ret;
++
++	ret = of_property_read_string(node, "name", &dt_name);
++	if (ret != 0)
++		dt_name = "pengic";
++	uio_info->name = kstrdup(dt_name, GFP_KERNEL);
++	if (uio_info->name == NULL)
++		return -ENOMEM;
++	uio_info->version = "0.0.1";
++
++	irq = irq_of_parse_and_map(node, 0);
++	if (irq == 0) {
++		dev_warn(dev, "no interrupt found for %pOF\n", node);
++		uio_info->irq = UIO_IRQ_NONE;
++		return -ENXIO;
++	}
++
++	uio_info->irq = irq;
++	uio_info->irq_flags = IRQF_SHARED;
++	uio_info->handler = pengic_handler;
++	uio_info->irqcontrol = pengic_irqcontrol;
++
++	return 0;
++}
++
++static void free_uio_info(struct uio_info *uio_info, unsigned n_res,
++	struct device *dev)
++{
++	if (uio_info->name != NULL) {
++		kfree(uio_info->name);
++		uio_info->name = NULL;
++	}
++
++	uio_info->handler = NULL;
++	uio_info->irqcontrol = NULL;
++	unmap_asic(uio_info, n_res, dev);
++}
++
++static void free_platdata(struct pengic_platdata *platdata)
++{
++	kfree(platdata);
++}
++
++static enum reg_type get_reg_type(struct device_node *node)
++{
++	const char *reg_type_name;
++	int rc;
++
++	rc = of_property_read_string(node, "register-type", &reg_type_name);
++	if (rc != 0)
++		return REG_TYPE_UNKNOWN;
++	if (strcmp(reg_type_name, "csr") == 0)
++		return REG_TYPE_CSR;
++	if (strcmp(reg_type_name, "group") == 0)
++		return REG_TYPE_GRP;
++	if (strcmp(reg_type_name, "csr-interrupt") == 0)
++		return REG_TYPE_CSRINTR;
++
++	pr_warn("Unknown register type: %s\n", reg_type_name);
++	return REG_TYPE_UNKNOWN;
++}
++
++static int set_platdata(struct pengic_platdata *platdata,
++	const struct uio_info *uioinfo, struct platform_device *pdev)
++{
++	struct device_node *node;
++	int ret;
++	u32 fw_param;
++
++	/* Initialize the platform data */
++
++	platdata->node = pdev->dev.of_node;
++	platdata->dev = &pdev->dev;
++	platdata->name = uioinfo->name;
++
++	platdata->irq = uioinfo->irq;
++	node = platdata->node;
++
++	platdata->reg_type = get_reg_type(platdata->node);
++
++	ret = map_asic(platdata->uio_info, platdata->dev, node,
++		platdata->res, ARRAY_SIZE(platdata->res));
++	if (ret < 0) {
++		dev_err(platdata->dev, "can't map ASIC registers\n");
++		return ret;
++	}
++
++	platdata->n_res = ret;
++
++#if 0
++	/*
++	 * This is why the first region in the "reg" property must be the
++	 * CSR address
++	 */
++	mem = &uioinfo->mem[0];
++	platdata->enable_csr = mem->internal_addr + mem->offs;
++	if (platdata->enable_csr == NULL)
++		return -ENOMEM;
++#endif
++
++	/*
++	 * Get the interrupt number. This must be the first of a three
++	 * element irq_fwspec. Can check "#interrupt-cells" if necessary.
++	 */
++	ret = of_property_read_u32_index(platdata->node, "interrupts", 2,
++		&fw_param);
++	if (ret != 0)
++		return ret;
++	platdata->enable_mask = 1 << fw_param;
++
++	return 0;
++}
++
++/*
++ * pengic_probe - allocate and initialize state for device
++ * @pdev:	Pointer to the platform device
++ * @handler_fn:	Pointer to the IRQ handler
++ * @release_fn:	Pointer to the release function (called when the last file
++ *		descriptor is closed)
++ */
++static int pengic_probe_common(struct platform_device *pdev,
++	irqreturn_t (*handler_fn)(int irq, struct uio_info *uioinfo),
++	int (*release_fn)(struct uio_info *uioinfo, struct inode *inode))
++{
++	struct device_node *node;
++	struct pengic_platdata *platdata;
++	struct uio_info *uio_info;
++	unsigned i;
++	int ret;
++
++	ret = -EINVAL;
++	node = pdev->dev.of_node;
++
++	/* Allocate space for the platform-specific data */
++	platdata = kzalloc(sizeof(*platdata), GFP_KERNEL);
++	if (platdata == NULL) {
++		dev_err(&pdev->dev, "can't allocate %zu bytes for platdata",
++			sizeof(*platdata));
++		return -ENOMEM;
++	}
++
++	uio_info = kzalloc(sizeof(*uio_info), GFP_KERNEL);
++	if (uio_info == NULL) {
++		dev_err(platdata->dev,
++			"unable to allocate %zu uio_info bytes\n",
++			sizeof(struct uio_info));
++		kfree(platdata);
++		return -ENOMEM;
++	}
++
++	uio_info->priv = platdata;
++	platdata->uio_info = uio_info;
++
++	ret = set_uio_info(uio_info, &pdev->dev, node, handler_fn);
++	if (ret != 0)
++		goto free_name;
++
++	ret = set_platdata(platdata, uio_info, pdev);
++	if (ret != 0)
++		goto free_uioinfo;
++
++	platform_set_drvdata(pdev, platdata);
++	uio_info->open = pengic_open;
++	uio_info->release = release_fn;
++	uio_info->priv = platdata;
++
++	/* Map the device */
++	if (dma_set_coherent_mask(&pdev->dev, DMA_BIT_MASK(64)) != 0) {
++		dev_err(&pdev->dev, "no valid coherent DMA mask");
++		goto free_platdata;
++	}
++
++	pm_runtime_enable(&pdev->dev);
++
++	/* Ready to be a grown up UIO device now */
++	ret = uio_register_device(&pdev->dev, platdata->uio_info);
++	if (ret != 0) {
++		dev_err(&pdev->dev, "can't register UIO device: ret %d", ret);
++		pm_runtime_disable(&pdev->dev);
++		goto free_platdata;
++	}
++
++	/* Print mapping report */
++	for (i = 0; i < platdata->n_res; i++) {
++		dev_info(platdata->dev, "0x%llx->%p\n",
++			platdata->res[i].start,
++			uio_info->mem[i].internal_addr);
++	}
++
++	return 0;
++
++free_platdata:
++	free_platdata(platdata);
++
++free_uioinfo:
++	free_uio_info(uio_info, ARRAY_SIZE(platdata->res), platdata->dev);
++
++free_name:
++	kfree(uio_info->name);
++	uio_info->name = NULL;
++
++	dev_err(platdata->dev, "probe failed\n");
++	return ret;
++}
++
++/*
++ * pengic_probe - allocate and initialize state for device where normal EOI
++ *	processing is sufficient to process an interrupt
++ * @pdev:		Pointer to the platform device
++ */
++int pengic_probe(struct platform_device *pdev)
++{
++	return pengic_probe_common(pdev, pengic_handler, pengic_release);
++}
++EXPORT_SYMBOL(pengic_probe);
++
++/*
++ * pengic_probe_enable - allocate and initialize state for device where an
++ * 	explicit call to irq_enable() is required to process an interrupt.
++ * @pdev:		Pointer to the platform device
++ */
++int pengic_probe_enable(struct platform_device *pdev)
++{
++	return pengic_probe_common(pdev, pengic_handler_disable,
++		pengic_release_enable);
++}
++EXPORT_SYMBOL(pengic_probe_enable);
++
++/*
++ * pengic_remove - free UIO-related data structures
++ *
++ *@pdev:	Pointer to the platform_device structure to remove
++ */
++int pengic_remove(struct platform_device *pdev)
++{
++	struct pengic_platdata *platdata;
++	struct uio_info *uio_info;
++	unsigned n_res;
++
++	platdata = platform_get_drvdata(pdev);
++	uio_info = platdata->uio_info;
++	platdata->uio_info = NULL;
++	uio_info->priv = NULL;
++	n_res = platdata->n_res;
++
++	/* This should not be necessary but it's defensive programing in
++	 * case this driver gets called after it has been shutdown */
++	platform_set_drvdata(pdev, NULL);
++
++	free_platdata(platdata);
++	free_uio_info(uio_info, n_res, &pdev->dev);
++
++	pm_runtime_disable(&pdev->dev);
++
++	return 0;
++}
++EXPORT_SYMBOL(pengic_remove);
++
++/*
++ * pengic_pm_nop - Power management stub that just returns success
++ *
++ * We leave it to other drivers to handle the device power management
++ * operations, if any.
++ */
++static int pengic_pm_nop(struct device *dev)
++{
++	return 0;
++}
++
++const struct dev_pm_ops pengic_pm_ops = {
++	.runtime_suspend = pengic_pm_nop,
++	.runtime_resume = pengic_pm_nop,
++};
++EXPORT_SYMBOL(pengic_pm_ops);
++
++MODULE_LICENSE("GPL v2");
++MODULE_DESCRIPTION("Support userspace I/O for Pensando Elba Ring interrupts");
++MODULE_AUTHOR("David VomLehn");
+diff --git a/drivers/uio/uio_pengic.h b/drivers/uio/uio_pengic.h
+new file mode 100644
+index 000000000000..fcfca7c08a1a
+--- /dev/null
++++ b/drivers/uio/uio_pengic.h
+@@ -0,0 +1,12 @@
++#ifndef _UIO_PENGIC_H_
++#define _UIO_PENGIC_H_
++
++#include <linux/of.h>
++#include <linux/platform_device.h>
++
++extern const struct dev_pm_ops pengic_pm_ops;
++
++int pengic_probe(struct platform_device *pdev);
++int pengic_probe_enable(struct platform_device *pdev);
++int pengic_remove(struct platform_device *pdev);
++#endif /* _UIO_PENGIC_H_ */
+diff --git a/drivers/uio/uio_penmsi.c b/drivers/uio/uio_penmsi.c
+new file mode 100644
+index 000000000000..da74d9edffc2
+--- /dev/null
++++ b/drivers/uio/uio_penmsi.c
+@@ -0,0 +1,592 @@
++/*
++ * UIO common driver for MSIX interrupts for Pensando Elba system.
++ *
++ * As you read this, remember that it is the common portion of what will
++ * generally be many drivers. As such, functions like the probe() function have
++ * to deal with contention, which code that is one-per-driver do not. This
++ * makes things a bit more complex.
++ *
++ * The second complexity is that we have an asynchronous callback from MSIX.
++ * Since we don't now the context of that call, we pre-allocate the
++ * needed data structures from a context known to be suitable for memory
++ * allocation. When the callback is called, it simply dequeues the memory
++ * and puts it on an "in use" list. When the probe() function needs to
++ * allocate its platform data, it just uses one of the structures on the
++ * in use list.
++ */
++
++#include <linux/platform_data/uio_dmem_genirq.h>
++#include <linux/platform_device.h>
++
++#include <linux/atomic.h>
++#include <linux/dma-mapping.h>
++#include <linux/io.h>
++#include <linux/irq.h>
++#include <linux/list.h>
++#include <linux/module.h>
++#include <linux/msi.h>
++#include <linux/of_address.h>
++#include <linux/of.h>
++#include <linux/of_irq.h>
++#include <linux/pm_runtime.h>
++#include <linux/slab.h>
++#include <linux/uio_driver.h>
++#include <linux/wait.h>
++
++#if 0
++#define kfree(p)	do { \
++		pr_err("%s: kfree %s: %p\n", __func__, #p, p); \
++		kfree(p); \
++	} while (0)
++#endif
++
++/* Optionally add attributes */
++#define ADD_ATTRS
++#undef ENABLE_STORE
++
++#ifdef ADD_ATTRS
++#define to_penmsi_dir(kobjp) container_of(kobjp, struct penmsi_dir, kobj)
++#endif
++
++/*
++ * devdata - information for a UIO device
++ * @pdev:		Pointer to the struct platform_device
++ * @platdata:		Pointer to the containing struct platdata
++ * @have_msi_index:	Indicates that @msi_index is valid
++ * @msi_index:		Index used to match descriptors with data
++ * @open:		Flag indicating whether this device is open
++ * @msi_msg:		MSI address and data information
++ * @list		Item in a list of allocated devdata items;
++ * @penmsi_dir:		Pointer to information about the penmsi directory
++ *			in which the command file lives
++ */
++struct devdata {
++	struct uio_info		uio_info;
++	struct platdata		*platdata;
++	bool			have_msi_msg;
++	bool			have_msi_desc;
++	u16			msi_index;
++	bool			open;
++	struct msi_msg		msi_msg;
++#ifdef ADD_ATTRS
++	struct penmsi_dir	*penmsi_dir;
++#endif
++};
++
++/*
++ * Per platform device
++ * @pdev:		Associated platform device
++ * @n_pending:		Remaining number of devdata items we are waiting for
++ * @n_irqs:		Number of IRQs being supported
++ * @n_valid:		Number of struct devdata items initialized for use
++ * @devdata:		Array of struct devdata items
++ */
++struct platdata {
++	struct platform_device	*pdev;
++	unsigned		n_pending;
++	size_t			n_irqs;
++	unsigned		n_valid;
++	struct devdata		devdatas[];
++};
++/*
++ * @penmsi_sem:		Protects the @init_platdata pointer and allocation of
++ *			MSI IRQs
++ * @init_platdata:	Pointer to the platdata currently being initialized.
++ *			This is only valid while @penmsi_sem is held
++ */
++static DEFINE_SEMAPHORE(penmsi_sem);
++static DECLARE_WAIT_QUEUE_HEAD(penmsi_wq_head);
++static DEFINE_SPINLOCK(penmsi_lock);
++static struct platdata *init_platdata;
++static unsigned num_uio_devs;
++
++#ifdef ADD_ATTRS
++struct penmsi_dir {
++	struct kobject	kobj;
++	struct msi_msg	*msi_msg;
++	size_t 		msi_size;
++};
++
++struct msi {
++	int 			counter;
++	struct penmsi_dir	*penmsi_dir;
++};
++
++static ssize_t msi_show(struct msi_msg *msi_msg, char *buf)
++{
++	memcpy(buf, msi_msg, sizeof(*msi_msg));
++	return sizeof(*msi_msg);
++}
++
++#ifdef ENABLE_STORE
++static ssize_t msi_store(struct msi_msg *msi_msg, const char *buf,
++	size_t size)
++{
++	if (size != sizeof(*msi_msg))
++		return -EINVAL;
++
++	memcpy(msi_msg, buf, sizeof(*msi_msg));
++	return sizeof(*msi_msg);
++}
++#else
++static ssize_t msi_store(struct msi_msg *msi_msg, const char *buf,
++	size_t size)
++{
++	return -ENOSYS;
++}
++#endif
++
++struct msi_sysfs_entry {
++	struct attribute attr;
++	ssize_t (*show)(struct msi_msg *, char *);
++	ssize_t (*store)(struct msi_msg *, const char *, size_t);
++};
++
++static struct msi_sysfs_entry msi_attribute =
++	__ATTR(msi, S_IRUSR | S_IWUSR, msi_show, msi_store);
++
++static struct attribute *attrs[] = {
++	&msi_attribute.attr,
++	NULL,	/* need to NULL terminate the list of attributes */
++};
++
++static void penmsi_rel(struct kobject *kobj)
++{
++	struct penmsi_dir *penmsi_dir = to_penmsi_dir(kobj);
++	kfree(penmsi_dir);
++}
++
++static ssize_t penmsi_show(struct kobject *kobj, struct attribute *attr,
++			     char *buf)
++{
++	struct penmsi_dir *penmsi_dir = to_penmsi_dir(kobj);
++	struct msi_msg *msi_msg = penmsi_dir->msi_msg;
++	struct msi_sysfs_entry *entry;
++
++	entry = container_of(attr, struct msi_sysfs_entry, attr);
++
++	if (entry->show == NULL)
++		return -ENOSYS;
++	return entry->show(msi_msg, buf);
++}
++
++#ifdef ENABLE_STORE
++static ssize_t penmsi_store(struct kobject *kobj, struct attribute *attr,
++	const char *buf, size_t size)
++{
++	struct penmsi_dir *penmsi_dir = to_penmsi_dir(kobj);
++	struct msi *msi = penmsi_dir->msi;
++	struct msi_sysfs_entry *entry;
++
++	entry = container_of(attr, struct msi_sysfs_entry, attr);
++
++	if (entry->show == NULL)
++		return -ENOSYS;
++
++	return entry->store(msi, buf, size);
++}
++#else
++static ssize_t penmsi_store(struct kobject *kobj, struct attribute *attr,
++	const char *buf, size_t size)
++{
++	return -ENOSYS;
++}
++#endif
++
++static const struct sysfs_ops penmsi_sysfs_ops = {
++	.show = penmsi_show,
++	.store = penmsi_store,
++};
++
++static struct kobj_type penmsi_attr_type = {
++	.release	= penmsi_rel,
++	.sysfs_ops	= &penmsi_sysfs_ops,
++	.default_attrs	= attrs,
++};
++
++static int add_attr(struct devdata *devdata)
++{
++	struct penmsi_dir *penmsi_dir;
++	struct uio_device *uio_dev;
++	int ret;
++
++	/*
++	 * Create a kobject for the directory in which the command interface
++	 * lives
++	 * */
++	uio_dev = devdata->uio_info.uio_dev;
++
++	/* Allocate storage for the command file */
++	penmsi_dir = kzalloc(sizeof(*penmsi_dir), GFP_KERNEL);
++	if (penmsi_dir == NULL)
++		return -ENOMEM;
++	devdata->penmsi_dir = penmsi_dir;
++	devdata->penmsi_dir->msi_msg = &devdata->msi_msg;
++	devdata->penmsi_dir->msi_size = sizeof(devdata->msi_msg);
++	kobject_init(&devdata->penmsi_dir->kobj, &penmsi_attr_type);
++
++	ret = kobject_add(&devdata->penmsi_dir->kobj, &uio_dev->dev->kobj,
++		"pensando"); 
++	if (ret != 0)
++		goto remove_penmsi_dir;
++
++	ret = kobject_uevent(&devdata->penmsi_dir->kobj, KOBJ_ADD);
++	if (ret != 0)
++		goto remove_penmsi_dir;
++
++	return 0;
++
++remove_penmsi_dir:
++	kobject_put(&devdata->penmsi_dir->kobj);
++	kfree(devdata->penmsi_dir);
++	devdata->penmsi_dir = NULL;
++
++	dev_err(uio_dev->dev, "error creating sysfiles (%d)\n", ret);
++	return -EIO;
++}
++
++static void del_attr(struct devdata *devdata)
++{
++	kobject_put(&devdata->penmsi_dir->kobj);
++	devdata->penmsi_dir = NULL;
++}
++
++static int adorn_with_attrs(struct devdata *devdata)
++{
++	int rc;
++
++	rc = add_attr(devdata);
++	if (rc != 0) {
++		dev_err(&devdata->platdata->pdev->dev, "%s failed: %d\n",
++			__func__, rc);
++		goto remove_attrs;
++	}
++
++	return 0;
++
++remove_attrs:
++	del_attr(devdata);
++	return rc;
++
++}
++
++static void del_attrs(struct platdata *platdata)
++{
++	unsigned i;
++
++	for (i = 0; i < platdata->n_irqs; i++) {
++		del_attr(&platdata->devdatas[i]);
++	}
++}
++#else
++static inline int add_attr(struct devdata *devdata) { return 0; }
++static inline void del_attr(struct devdata *devdata) { }
++static inline void del_attrs(struct platdata *platdata) { }
++#endif
++
++static int penmsi_open(struct uio_info *uio_info, struct inode *inode)
++{
++	struct platdata *platdata;
++	struct devdata *devdata;
++	int ret;
++
++	devdata = uio_info->priv;
++	if (devdata->open)
++		return -EBUSY;
++	devdata->open = true;
++	ret = 0;
++
++	platdata = devdata->platdata;
++	pm_runtime_get_sync(&platdata->pdev->dev);
++
++	return ret;
++}
++
++static int penmsi_release(struct uio_info *uio_info, struct inode *inode)
++{
++	struct devdata *devdata;
++
++	devdata = uio_info->priv;
++	devdata->open = false;
++	pm_runtime_put_sync(&devdata->platdata->pdev->dev);
++
++	return 0;
++}
++
++
++/*
++ * The interrupt is edge triggered, so if we don't do anything and just
++ * return, nothing bad will happen. Yes, this is a bit unusual but
++ * it's useful.
++ */
++static irqreturn_t penmsi_handler(int irq, struct uio_info *uio_info)
++{
++	return IRQ_HANDLED;
++}
++
++static void decrement_pending(struct platdata *platdata)
++{
++	platdata->n_pending--;
++	if (platdata->n_pending == 0)
++		up(&penmsi_sem);
++}
++
++/*
++ * MSI callback function.
++ * stores the information it was passed, and queues it on the inuse list.
++ *
++ */
++static void penmsi_callback(struct msi_desc *desc, struct msi_msg *msg)
++{
++	struct devdata *devdata;
++	struct platdata *platdata;
++	unsigned long flags;
++
++	platdata = init_platdata;
++	devdata = &platdata->devdatas[desc->platform.msi_index];
++	devdata->msi_msg = *msg;
++
++	spin_lock_irqsave(&penmsi_lock, flags);
++	devdata->have_msi_msg = true;
++
++	if (devdata->have_msi_desc) {
++		decrement_pending(platdata);
++	}
++	spin_unlock_irqrestore(&penmsi_lock, flags);
++}
++
++/*
++ * Remove the device completely
++ * @pdev:	Pointer to the struct platform_device we're using
++ */
++int penmsi_remove(struct platform_device *pdev)
++{
++	struct platdata *platdata;
++	unsigned i;
++
++	platdata = platform_get_drvdata(pdev);
++	platform_msi_domain_free_irqs(&pdev->dev);
++	del_attrs(platdata);
++
++	// FIXME: this needs to use n_valid
++	for (i = 0; i < platdata->n_irqs; i++) {
++		struct devdata *devdata;
++		struct uio_info *uio_info;
++
++		devdata = &platdata->devdatas[i];
++		uio_info = &devdata->uio_info;
++		uio_unregister_device(uio_info);
++		kfree(uio_info->name);
++
++		/*
++		 * We're cheating with this, skip all the rest of the UIOs
++		 * so we don't free anything we shouldn't. This is going to
++		 * result in a memory leak.
++		 */
++		break;
++	}
++
++	kfree(platdata);
++
++	return 0;
++}
++EXPORT_SYMBOL(penmsi_remove);
++
++static int penmsi_probe_one(struct devdata *devdata,
++	struct platform_device *pdev, struct msi_desc *desc)
++{
++	struct uio_info *uio_info;
++	const char *dt_name;
++	char name_buf[32];
++	int rc;
++
++	uio_info = &devdata->uio_info;
++
++	rc = of_property_read_string(pdev->dev.of_node, "name", &dt_name);
++	if (rc != 0)
++		dt_name = "penmsiX";
++	snprintf(name_buf, sizeof(name_buf), "%s.%u", dt_name, num_uio_devs);
++	num_uio_devs++;
++	uio_info->name = kstrdup(name_buf, GFP_KERNEL);
++	if (uio_info->name == NULL)
++		return -ENOMEM;
++
++	/*
++	 * Only take one interrupt because UIO won't let us pass more than
++	 * that
++	 */
++	uio_info->priv = devdata;
++	uio_info->version = "0.1";
++	uio_info->open = penmsi_open;
++	uio_info->release = penmsi_release;
++	uio_info->handler = penmsi_handler;
++	uio_info->irq = desc->irq;
++	uio_info->irq_flags = IRQF_SHARED;
++
++	/* Ready to be a grown up UIO device now */
++	rc = uio_register_device(&pdev->dev, uio_info);
++	if (rc != 0) {
++		dev_err(&pdev->dev, "can't register UIO device");
++		pm_runtime_disable(&pdev->dev);
++		goto free_name;
++	}
++
++	rc = adorn_with_attrs(devdata);
++	if (rc != 0)
++		goto unregister_uio;
++
++	pm_runtime_enable(&pdev->dev);
++
++	return 0;
++
++unregister_uio:
++	uio_unregister_device(uio_info);
++
++free_name:
++	kfree(uio_info->name);
++	uio_info->name = NULL;
++
++	return rc;
++}
++
++/*
++ * Allocate a struct platdata with all of its devdata structures.
++ *
++ * Returns the a pointer to the allocated platdata on success, NULL otherwise
++ */
++static struct platdata *alloc_devdatas(unsigned n)
++{
++	unsigned i;
++	struct platdata *platdata;
++
++	platdata = kzalloc(offsetof(struct platdata, devdatas[n]), GFP_KERNEL);
++	if (platdata == NULL)
++		return platdata;
++
++	for (i =0; i < n; i++) {
++		platdata->devdatas[i].platdata = platdata;
++	}
++
++	platdata->n_pending = n;
++	platdata->n_irqs = n;
++
++	return platdata;
++}
++
++/*
++ * penmsi_probe - allocate and initialize state for device
++ */
++int penmsi_probe(struct platform_device *pdev)
++{
++	struct msi_desc *desc;
++	struct platdata *platdata;
++	struct devdata *devdata;
++	u32 num_interrupts;
++	int rc;
++
++	num_uio_devs = 0;
++	rc = of_property_read_u32(pdev->dev.of_node, "num-interrupts",
++		&num_interrupts);
++	if (rc != 0) {
++		dev_err(&pdev->dev, "num-interrupts property missing\n");
++		return rc;
++	}
++	if (num_interrupts == 0) {
++		dev_err(&pdev->dev, "num-interrupts property must be >0\n");
++		return -EINVAL;
++	}
++
++	platdata = alloc_devdatas(num_interrupts);
++	platform_set_drvdata(pdev, platdata);
++	platdata->n_irqs = num_interrupts;
++	platdata->pdev = pdev;
++
++	/* Due to the way MSI passes back information, we want to allocate
++	 * MSI IRQs one at a time. */
++	down(&penmsi_sem);
++	init_platdata = platdata;
++
++	/* Kick off work that should result in calling the callback */
++	rc = platform_msi_domain_alloc_irqs(&pdev->dev, num_interrupts,
++		penmsi_callback);
++	if (rc != 0) {
++		dev_err(&pdev->dev,
++			"platform_msi_domain_alloc_irqs failed: %d\n", rc);
++		goto up_sem;
++	}
++
++	for_each_msi_entry(desc, &pdev->dev) {
++		unsigned long flags;
++
++		devdata = &platdata->devdatas[desc->platform.msi_index];
++		spin_lock_irqsave(&penmsi_lock, flags);
++		devdata->have_msi_desc = true;
++		if (devdata->have_msi_msg)
++			decrement_pending(platdata);
++		spin_unlock_irqrestore(&penmsi_lock, flags);
++		rc = penmsi_probe_one(devdata, pdev, desc);
++		if (rc != 0)
++			goto free_msis;
++	}
++
++	init_platdata = NULL;		// Don't use this again
++	up(&penmsi_sem);
++
++	/* Map the device */
++	rc = dma_set_coherent_mask(&pdev->dev, DMA_BIT_MASK(64));
++	if (rc != 0) {
++		dev_err(&pdev->dev, "no valid coherent DMA mask");
++		goto free_msis;
++	}
++
++	return 0;
++
++free_msis:
++	platform_msi_domain_free_irqs(&pdev->dev);
++
++up_sem:
++	up(&penmsi_sem);
++	kfree(platdata);
++#if 0
++	spin_lock_irqsave(&alloc_lock, flags);
++	list_for_each_safe(p, n, &alloc_list) {
++		struct devdata *devdata;
++		struct uio_info *uio_info;
++
++		devdata = list_entry(p, struct devdata, list);
++		uio_info = &devdata->uio_info;
++		list_del(&devdata->list);
++		del_attrs(devdata);
++		uio_unregister_device(uio_info);
++		kfree(uio_info->name);
++		uio_info->name = NULL;
++		kfree(devdata);
++	}
++	spin_unlock_irqrestore(&alloc_lock, flags);
++	atomic_set(&active, 0);
++#endif
++	return rc;
++
++}
++EXPORT_SYMBOL(penmsi_probe);
++
++/*
++ * penmsi_pm_nop - Power management stub that just returns success
++ *
++ * We leave it to other drivers to handle the device power management
++ * operations, if any.
++ */
++static int penmsi_pm_nop(struct device *dev)
++{
++	return 0;
++}
++
++const struct dev_pm_ops penmsi_pm_ops = {
++	.runtime_suspend = penmsi_pm_nop,
++	.runtime_resume = penmsi_pm_nop,
++};
++EXPORT_SYMBOL(penmsi_pm_ops);
++
++MODULE_LICENSE("GPL v2");
++MODULE_DESCRIPTION("Support userspace I/O for Pensando MSIX interrupts");
++MODULE_AUTHOR("David VomLehn");
+diff --git a/drivers/uio/uio_penmsi.h b/drivers/uio/uio_penmsi.h
+new file mode 100644
+index 000000000000..bcae25c7cc25
+--- /dev/null
++++ b/drivers/uio/uio_penmsi.h
+@@ -0,0 +1,11 @@
++#ifndef _UIO_PENMSI_H_
++#define _UIO_PENMSI_H_
++
++#include <linux/of.h>
++#include <linux/platform_device.h>
++
++extern const struct dev_pm_ops penmsi_pm_ops;
++
++int penmsi_probe(struct platform_device *pdev);
++int penmsi_remove(struct platform_device *pdev);
++#endif /* _UIO_PENMSI_H_ */
+diff --git a/drivers/uio/uio_penmsi1.c b/drivers/uio/uio_penmsi1.c
+new file mode 100644
+index 000000000000..68e7f8cfa824
+--- /dev/null
++++ b/drivers/uio/uio_penmsi1.c
+@@ -0,0 +1,28 @@
++#include <linux/module.h>
++
++#include "uio_penmsi.h"
++
++#define DRIVER_NAME_MSIX1	"uio_penmsi1"
++
++#ifdef CONFIG_OF
++static const struct of_device_id penmsi_match[] = {
++	{ .compatible = "pensando,uio_penmsi1" },
++	{ /* Mark the end of the list */ },
++};
++#endif
++
++static struct platform_driver penmsi1 = {
++	.probe = penmsi_probe,
++	.remove = penmsi_remove,
++	.driver = {
++		.name = DRIVER_NAME_MSIX1,
++		.pm = &penmsi_pm_ops,
++		.of_match_table = of_match_ptr(penmsi_match),
++	}
++};
++
++module_platform_driver(penmsi1);
++
++MODULE_LICENSE("GPL v2");
++MODULE_DESCRIPTION("Support userspace I/O for Pensando MSI interrupts");
++MODULE_AUTHOR("David VomLehn");
+diff --git a/include/linux/irqchip/irq-pensando.h b/include/linux/irqchip/irq-pensando.h
+new file mode 100644
+index 000000000000..7e699e7ce503
+--- /dev/null
++++ b/include/linux/irqchip/irq-pensando.h
+@@ -0,0 +1,93 @@
++/*
++ * Copyright (C) 2019 Pensando, Inc.
++ *
++ * This program is free software; you can redistribute it and/or modify
++ * it under the terms of the GNU General Public License version 2 as
++ * published by the Free Software Foundation.
++ *
++ * Definitions for interrupt domain controllers for Pensando Elba chip
++ */
++
++#ifndef _LINUX_IRQCHIP_IRQ_PENSANDO_H_
++#define _LINUX_IRQCHIP_IRQ_PENSANDO_H_
++/* Types of possible register blocks */
++enum reg_type {
++	REG_TYPE_UNKNOWN,
++	REG_TYPE_CSR,
++	REG_TYPE_GRP,
++	REG_TYPE_CSRINTR,
++};
++
++/*
++ * Common format for interrupt block control registers for a CSR block
++ * @intreg:		Interrupt status on read, clear interrupt on write
++ * @int_test:		Test bits, write to cause corresponding interrupt
++ * @int_enable_set:	Write to set enable bits, read for current enable mask
++ * @int_enable_clear:	Write to clear enable bits
++ */
++struct pen_ictlr_csr {
++	u32	intreg;
++	u32	int_test;
++	u32	int_enable_set;
++	u32	int_enable_clear;
++};
++
++/*
++ * Common format for interrupt block control registers for a group
++ * @intreg:		Interrupt status on read, clear interrupt on write
++ * @int_enable_rw_reg:	Enable bits
++ * @int_rw_reg:		TBD
++ */
++struct pen_ictlr_grp {
++	u32	intreg;
++	u32	int_enable_rw_reg;
++	u32	int_rw_reg;
++};
++
++/*
++ * Common format for interrupt block control registers for a CSR interrupt
++ * block
++ * @intr:		Interrupt status in low order bit, i.e. bit 0. The
++ *			enable bit is bit 1.
++ */
++struct pen_ictlr_csrintr {
++	u32	intr;
++};
++
++/*
++ * Per domain information
++ * @reg_type:		Type of register block
++ * @domain:		Pointer to the associated &struct irq_domain
++ * @dn:			Pointer to the device tree device node for this
++ *			interrupt controller
++ * @irq_chip:		Pointer to the struct irq_chip for this domain (which
++ * 			has just one)
++ * @num_irqs:		Number of IRQs for this chip
++ * @irq_lock:		Per-domain controller lock
++ * @irq_flag:		Flag set by spin_lock_irqsave() when used on
++ *			@irq_lock to be restored by spin_lock_irqrestore()
++ * @num_bases:		Number of virtual addresses in @map_base
++ * @map_base:		Virtual addresses of the beginning of the register
++ *			block, mapped from the reg property. Allocation
++ *			continues at the end to accomodate the values.
++ */
++struct pen_ictlr_info {
++	enum reg_type		reg_type;
++	struct irq_domain	*domain;
++	struct device_node	*dn;
++	struct irq_chip *	irq_chip;
++	unsigned		parent_irq;
++	spinlock_t		irq_lock;
++	unsigned long		irq_flag;
++	unsigned		num_bases;
++	void __iomem		*map_base[];
++};
++
++/* Enable/disable functions that do not recurse on their parents */
++void pen_irq_unmask_enable_csr_one(struct irq_data *irq_data);
++void pen_irq_mask_disable_csr_one(struct irq_data *irq_data);
++void pen_irq_unmask_enable_grp_one(struct irq_data *irq_data);
++void pen_irq_mask_disable_grp_one(struct irq_data *d);
++void pen_irq_unmask_enable_csrintr_one(struct irq_data *irq_data);
++void pen_irq_mask_disable_csrintr_one(struct irq_data *irq_data);
++#endif
+-- 
+2.17.1
+
