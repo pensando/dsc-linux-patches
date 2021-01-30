@@ -1,0 +1,74 @@
+From a9d74e50956defb420b07c041ba2fa583342f5a0 Mon Sep 17 00:00:00 2001
+From: David Clear <dac2@pensando.io>
+Date: Tue, 30 Jun 2020 14:14:48 -0700
+Subject: [PATCH] pcie: control access to pcie clock domain registers
+
+Ignore SError error execptions that occur when accessing pcie clock
+domain registers when the pcie clock goes away.  The normal kernel
+handling is to force kill the process running when the SError interrupt
+arrives, or panic if not in a process context.
+
+Signed-off-by: David Clear <dac2@pensando.io>
+---
+ arch/arm64/include/asm/traps.h |  2 ++
+ arch/arm64/kernel/entry.S      |  2 +-
+ arch/arm64/kernel/traps.c      | 13 +++++++++++--
+ 3 files changed, 14 insertions(+), 3 deletions(-)
+
+diff --git a/arch/arm64/include/asm/traps.h b/arch/arm64/include/asm/traps.h
+index d131501c6222..6f37afbcee47 100644
+--- a/arch/arm64/include/asm/traps.h
++++ b/arch/arm64/include/asm/traps.h
+@@ -37,6 +37,8 @@ void unregister_undef_hook(struct undef_hook *hook);
+ 
+ void arm64_notify_segfault(struct pt_regs *regs, unsigned long addr);
+ 
++int platform_bad_mode(struct pt_regs *regs);
++
+ static inline int __in_irqentry_text(unsigned long ptr)
+ {
+ 	return ptr >= (unsigned long)&__irqentry_text_start &&
+diff --git a/arch/arm64/kernel/entry.S b/arch/arm64/kernel/entry.S
+index e1c59d4008a8..b9bf8482627b 100644
+--- a/arch/arm64/kernel/entry.S
++++ b/arch/arm64/kernel/entry.S
+@@ -430,7 +430,7 @@ __bad_stack:
+ 	mov	x1, #\reason
+ 	mrs	x2, esr_el1
+ 	bl	bad_mode
+-	ASM_BUG()
++	kernel_exit \el
+ 	.endm
+ 
+ el0_sync_invalid:
+diff --git a/arch/arm64/kernel/traps.c b/arch/arm64/kernel/traps.c
+index 8383af15a759..1945f5fe5330 100644
+--- a/arch/arm64/kernel/traps.c
++++ b/arch/arm64/kernel/traps.c
+@@ -629,12 +629,21 @@ const char *esr_get_class_string(u32 esr)
+ 	return esr_class_str[ESR_ELx_EC(esr)];
+ }
+ 
++int __weak platform_bad_mode(struct pt_regs *regs)
++{
++	return 0;
++}
++
+ /*
+- * bad_mode handles the impossible case in the exception vector. This is always
+- * fatal.
++ * bad_mode handles the impossible case in the exception vector.
++ * This is usually fatal, but give the platform a chance to handle
++ * platform-specific errors.
+  */
+ asmlinkage void bad_mode(struct pt_regs *regs, int reason, unsigned int esr)
+ {
++	if (platform_bad_mode(regs))
++		return;
++
+ 	console_verbose();
+ 
+ 	pr_crit("Bad mode in %s handler detected on CPU%d, code 0x%08x -- %s\n",
+-- 
+2.17.1
+
