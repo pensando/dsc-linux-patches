@@ -25,3 +25,6 @@ This patch enables PTP (IEEE1588) support.
 **05_elba_platform_irqchip.patch**<br>
 This patch supports ASIC internal interrupts so they can be accessed
 by userspsace daemons via uio.
+
+**06_elba_dts_flash_typeo.patch**<br>
+This patch fixes a typeo in the elba-asic-common.dtsi.

@@ -1,0 +1,26 @@
+From 6081c2a7518f29362c90727b0edcc622e99dc63a Mon Sep 17 00:00:00 2001
+From: David Clear <dac2@pensando.io>
+Date: Sun, 31 Jan 2021 11:00:32 -0800
+Subject: [PATCH] dts/pensando: Fix compatile -> compatible typeo.
+
+Signed-off-by: David Clear <dac2@pensando.io>
+---
+ arch/arm64/boot/dts/pensando/elba-asic-common.dtsi | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/arch/arm64/boot/dts/pensando/elba-asic-common.dtsi b/arch/arm64/boot/dts/pensando/elba-asic-common.dtsi
+index a3c355632b29..762c9cda95b0 100644
+--- a/arch/arm64/boot/dts/pensando/elba-asic-common.dtsi
++++ b/arch/arm64/boot/dts/pensando/elba-asic-common.dtsi
+@@ -30,7 +30,7 @@
+ &qspi {
+ 	status = "okay";
+ 	flash0: mt25q@0 {
+-		compatile = "jdec,spi-nor";
++		compatible = "jdec,spi-nor";
+ 		reg = <0>;
+ 		spi-max-frequency = <40000000>;
+ 		spi-rx-bus-width = <2>;
+-- 
+2.17.1
+
