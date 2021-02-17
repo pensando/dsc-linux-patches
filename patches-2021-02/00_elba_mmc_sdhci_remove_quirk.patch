@@ -1,0 +1,31 @@
+From 83b2729d3f5dff1fd6c6f9aab4820bdbd6d9ccef Mon Sep 17 00:00:00 2001
+From: David Clear <dac2@users.noreply.github.com>
+Date: Sun, 31 Jan 2021 12:35:48 -0800
+Subject: [PATCH] mmc: sdhci-cadence-elba.c: Remove
+ SDHCI_QUIRK_BROKEN_TIMEOUT_VAL (#182)
+
+This patch the broken timeout quirk from Elba's EMMC driver.  The
+quirk was required as u-boot was initializing a hwinit timing parameter
+incorrectly.
+
+This patch requires a correspodndingly fixed u-boot to work correctly.
+
+Signed-off-by: David Clear <dac2@pensando.io>
+---
+ drivers/mmc/host/sdhci-cadence-elba.c | 1 -
+ 1 file changed, 1 deletion(-)
+
+diff --git a/drivers/mmc/host/sdhci-cadence-elba.c b/drivers/mmc/host/sdhci-cadence-elba.c
+index 327a9f1ccc0f..0cd28d1b3c64 100644
+--- a/drivers/mmc/host/sdhci-cadence-elba.c
++++ b/drivers/mmc/host/sdhci-cadence-elba.c
+@@ -151,6 +151,5 @@ const struct sdhci_cdns_drv_data sdhci_elba_drv_data = {
+ 	.init = elba_drv_init,
+ 	.pltfm_data = {
+ 		.ops = &sdhci_elba_ops,
+-		.quirks = SDHCI_QUIRK_BROKEN_TIMEOUT_VAL,
+ 	},
+ };
+-- 
+2.17.1
+
