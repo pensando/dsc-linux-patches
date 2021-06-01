@@ -1,0 +1,36 @@
+From 7b1305649019c6f9292048e68343150b6a58b311 Mon Sep 17 00:00:00 2001
+From: David Clear <dac2@pensando.io>
+Date: Tue, 1 Jun 2021 15:58:17 -0700
+Subject: [PATCH] arm64/configs: Remove CONFIG_PENSANDO_SOC_CAPMEM_HUGEPAGE
+
+This patch removes the /dev/capmem hugepage enablement.  This performance
+feature has exhibited problems in testing, so is being disabled for now.
+
+Signed-off-by: David Clear <dac2@pensando.io>
+---
+ arch/arm64/configs/elba_defconfig | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/arch/arm64/configs/elba_defconfig b/arch/arm64/configs/elba_defconfig
+index 2993e8398e9c..c3783d40cad3 100644
+--- a/arch/arm64/configs/elba_defconfig
++++ b/arch/arm64/configs/elba_defconfig
+@@ -49,6 +49,7 @@ CONFIG_HOTPLUG_CPU=y
+ CONFIG_PREEMPT_VOLUNTARY=y
+ # CONFIG_BOUNCE is not set
+ CONFIG_KSM=y
++CONFIG_TRANSPARENT_HUGEPAGE=y
+ CONFIG_TRANSPARENT_HUGEPAGE_MADVISE=y
+ CONFIG_SECCOMP=y
+ CONFIG_CRASH_DUMP=y
+@@ -223,7 +224,6 @@ CONFIG_CLK_QORIQ=y
+ # CONFIG_HISILICON_ERRATUM_161010101 is not set
+ # CONFIG_ARM64_ERRATUM_858921 is not set
+ # CONFIG_IOMMU_SUPPORT is not set
+-CONFIG_PENSANDO_SOC_CAPMEM_HUGEPAGE=y
+ CONFIG_PENSANDO_SOC_BSM_ENABLE=y
+ CONFIG_EXTCON=y
+ CONFIG_GENERIC_PHY=y
+-- 
+2.17.1
+
