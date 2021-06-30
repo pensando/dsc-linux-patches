@@ -1,0 +1,35 @@
+From 7dfd2171c6a6e79ce69179f41ccc9661d16b1a57 Mon Sep 17 00:00:00 2001
+From: David Clear <dac2@pensando.io>
+Date: Wed, 30 Jun 2021 13:52:48 -0700
+Subject: [PATCH] dts/pensando: Add board config partitions.
+
+This patch adds the brdcfg0 and brdcfg1 mtd partitions, as used
+by the board_config utility.
+
+Signed-off-by: David Clear <dac2@pensando.io>
+---
+ arch/arm64/boot/dts/pensando/elba-flash-parts.dtsi | 8 ++++++++
+ 1 file changed, 8 insertions(+)
+
+diff --git a/arch/arm64/boot/dts/pensando/elba-flash-parts.dtsi b/arch/arm64/boot/dts/pensando/elba-flash-parts.dtsi
+index 71089ed78ef2..eb570c71b37b 100644
+--- a/arch/arm64/boot/dts/pensando/elba-flash-parts.dtsi
++++ b/arch/arm64/boot/dts/pensando/elba-flash-parts.dtsi
+@@ -19,6 +19,14 @@
+ 			label = "golduboot";
+ 			reg = <0x00180000 0x00200000>;
+ 		};
++		partition@380000 {
++			label = "brdcfg0";
++			reg = <0x00380000 0x00010000>;
++		};
++		partition@390000 {
++			label = "brdcfg1";
++			reg = <0x00390000 0x00010000>;
++		};
+ 		partition@400000 {
+ 			label = "goldfw";
+ 			reg = <0x00400000 0x03c00000>;
+-- 
+2.17.1
+

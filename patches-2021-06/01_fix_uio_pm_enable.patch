@@ -1,0 +1,53 @@
+From c53c6de48ea37b4cd06313c6368effd6fecd99f7 Mon Sep 17 00:00:00 2001
+From: David Clear <dac2@pensando.io>
+Date: Wed, 30 Jun 2021 14:03:08 -0700
+Subject: [PATCH] drivers/uio: Fix incorrect calls to
+ pm_runtime_enable/disable.
+
+The pm_runtime_enable function was being incorrectly called in multiple
+places in the probe() call chain, resulting in warnings such as:
+
+[ 0.909643] uio_penmsi1 520000.uio_penmsi1: Unbalanced pm_runtime_enable!
+[ 0.916505] uio_penmsi1 520000.uio_penmsi1: Unbalanced pm_runtime_enable!
+[ 0.923381] uio_penmsi1 520000.uio_penmsi1: Unbalanced pm_runtime_enable!
+
+This diff cleans things up.
+
+Signed-off-by: David Clear <dac2@pensando.io>
+---
+ drivers/uio/uio_penmsi.c | 5 ++---
+ 1 file changed, 2 insertions(+), 3 deletions(-)
+
+diff --git a/drivers/uio/uio_penmsi.c b/drivers/uio/uio_penmsi.c
+index 783358af25d4..445be24da435 100644
+--- a/drivers/uio/uio_penmsi.c
++++ b/drivers/uio/uio_penmsi.c
+@@ -427,7 +427,6 @@ static int penmsi_probe_one(struct devdata *devdata,
+ 	rc = uio_register_device(&pdev->dev, uio_info);
+ 	if (rc != 0) {
+ 		dev_err(&pdev->dev, "can't register UIO device");
+-		pm_runtime_disable(&pdev->dev);
+ 		goto free_name;
+ 	}
+ 
+@@ -435,8 +434,6 @@ static int penmsi_probe_one(struct devdata *devdata,
+ 	if (rc != 0)
+ 		goto unregister_uio;
+ 
+-	pm_runtime_enable(&pdev->dev);
+-
+ 	return 0;
+ 
+ unregister_uio:
+@@ -539,6 +536,8 @@ int penmsi_probe(struct platform_device *pdev)
+ 		goto free_msis;
+ 	}
+ 
++	pm_runtime_enable(&pdev->dev);
++
+ 	return 0;
+ 
+ free_msis:
+-- 
+2.17.1
+
