@@ -1,0 +1,42 @@
+From 22f0f8536348fdfdf64641d9b0aa41b62732b3f6 Mon Sep 17 00:00:00 2001
+From: David Clear <dac2@pensando.io>
+Date: Thu, 15 Jul 2021 12:59:17 -0700
+Subject: [PATCH] capmem: Mark the pages as non-readonly+dirty.
+
+Newer kernels do clean/dirty page tracking by establishing pages
+as read-only by default, then marking them write+dirty upon the first
+write, via a page fault.
+
+This is undesirable (and unnecessary) for capmem memory.  It's undesirable
+as the page faults cost about a second at startup for the HAL to
+initialize the P4 tables.  It's unnecessary as this is memory external
+to Liunx so there's nothing to track.
+
+Signed-off-by: David Clear <dac2@pensando.io>
+---
+ drivers/soc/pensando/cap_mem.c | 9 +++++++++
+ 1 file changed, 9 insertions(+)
+
+diff --git a/drivers/soc/pensando/cap_mem.c b/drivers/soc/pensando/cap_mem.c
+index 4262f188a901..e5ee10e9c5c7 100644
+--- a/drivers/soc/pensando/cap_mem.c
++++ b/drivers/soc/pensando/cap_mem.c
+@@ -243,6 +243,15 @@ static int cap_mem_mmap(struct file *file, struct vm_area_struct *vma)
+ 		// CAPMEM_TYPE_COHERENT - default inner shareable mapping
+ 		break;
+ 	}
++
++	/*
++	 * Clear the RDONLY bit and set the DIRTY bit to bypass the
++	 * kernel's clean/dirty page tracking, which uses a page fault on
++	 * first write behavior, which is undesirable for performance.
++	 */
++	if (vma->vm_flags & VM_WRITE)
++		pgprot = __pgprot_modify(pgprot, PTE_RDONLY, PTE_DIRTY);
++
+ 	vma->vm_page_prot = pgprot;
+ 
+ #ifdef CONFIG_PENSANDO_SOC_CAPMEM_HUGEPAGE
+-- 
+2.17.1
+
