@@ -1,0 +1,30 @@
+From feb8b7950471877a6d1947ae5f8cf37357fedb0f Mon Sep 17 00:00:00 2001
+From: Brad Smith <brads@pensando.io>
+Date: Thu, 12 Aug 2021 15:55:35 -0700
+Subject: [PATCH] pcie: rm pcie register access message (#256)
+
+This patch removes the kernel logging of (expected) PCIE access errors,
+which can occur during link initialization.  The errors are still
+counted, but the kernel logs are not cluttered.
+
+Signed-off-by: David Clear <dac2@pensando.io>
+---
+ drivers/soc/pensando/cap_pcie.c | 2 --
+ 1 file changed, 2 deletions(-)
+
+diff --git a/drivers/soc/pensando/cap_pcie.c b/drivers/soc/pensando/cap_pcie.c
+index 3565fb2e53fc..ed40917debbf 100644
+--- a/drivers/soc/pensando/cap_pcie.c
++++ b/drivers/soc/pensando/cap_pcie.c
+@@ -71,8 +71,6 @@ static int pciep_bad_mode(struct pt_regs *regs)
+ 	struct pciedev_info *pi = &pciedev_info;
+ 
+ 	if (pi->pciep_access_address) {
+-		pr_info("pcie access error: address 0x%llx\n",
+-			pi->pciep_access_address);
+ 		pi->pciep_access_error++;
+ 		return 1;
+ 	}
+-- 
+2.17.1
+
