@@ -1,0 +1,102 @@
+From 9497b4e844401c0e50165d0e6bf590e4237ca7e4 Mon Sep 17 00:00:00 2001
+From: David Clear <dac2@pensando.io>
+Date: Tue, 25 Jan 2022 11:54:07 -0800
+Subject: [PATCH] Handle SError interrupt of type Decode Error.
+
+On Elba, an access to an invalid bus address results in a Decode SError
+that will panic the kernel.  Bugs in the HAL that cause these are very
+hard to debug, so trap these and if coming from user space, turn the
+Decode Error into SIGBUS.  Otherwise, if coming from the kernel, ignore.
+
+Signed-off-by: David Clear <dac2@pensando.io>
+---
+ arch/arm64/include/asm/traps.h  |  4 +++-
+ arch/arm64/kernel/traps.c       |  6 +++---
+ drivers/soc/pensando/cap_pcie.c | 21 +++++++++++++++++++--
+ 3 files changed, 25 insertions(+), 6 deletions(-)
+
+diff --git a/arch/arm64/include/asm/traps.h b/arch/arm64/include/asm/traps.h
+index 6f37afbcee47..21615380369b 100644
+--- a/arch/arm64/include/asm/traps.h
++++ b/arch/arm64/include/asm/traps.h
+@@ -34,10 +34,12 @@ struct undef_hook {
+ 
+ void register_undef_hook(struct undef_hook *hook);
+ void unregister_undef_hook(struct undef_hook *hook);
++void force_signal_inject(int signal, int code, struct pt_regs *regs,
++			 unsigned long address);
+ 
+ void arm64_notify_segfault(struct pt_regs *regs, unsigned long addr);
+ 
+-int platform_bad_mode(struct pt_regs *regs);
++int platform_bad_mode(struct pt_regs *regs, unsigned int esr);
+ 
+ static inline int __in_irqentry_text(unsigned long ptr)
+ {
+diff --git a/arch/arm64/kernel/traps.c b/arch/arm64/kernel/traps.c
+index 1945f5fe5330..c95fc537868c 100644
+--- a/arch/arm64/kernel/traps.c
++++ b/arch/arm64/kernel/traps.c
+@@ -358,7 +358,7 @@ static int call_undef_hook(struct pt_regs *regs)
+ 	return fn ? fn(regs, instr) : 1;
+ }
+ 
+-static void force_signal_inject(int signal, int code, struct pt_regs *regs,
++void force_signal_inject(int signal, int code, struct pt_regs *regs,
+ 				unsigned long address)
+ {
+ 	siginfo_t info;
+@@ -629,7 +629,7 @@ const char *esr_get_class_string(u32 esr)
+ 	return esr_class_str[ESR_ELx_EC(esr)];
+ }
+ 
+-int __weak platform_bad_mode(struct pt_regs *regs)
++int __weak platform_bad_mode(struct pt_regs *regs, unsigned int esr)
+ {
+ 	return 0;
+ }
+@@ -641,7 +641,7 @@ int __weak platform_bad_mode(struct pt_regs *regs)
+  */
+ asmlinkage void bad_mode(struct pt_regs *regs, int reason, unsigned int esr)
+ {
+-	if (platform_bad_mode(regs))
++	if (platform_bad_mode(regs, esr))
+ 		return;
+ 
+ 	console_verbose();
+diff --git a/drivers/soc/pensando/cap_pcie.c b/drivers/soc/pensando/cap_pcie.c
+index b3fad438b983..8cbd67afd040 100644
+--- a/drivers/soc/pensando/cap_pcie.c
++++ b/drivers/soc/pensando/cap_pcie.c
+@@ -72,9 +72,26 @@ static int pciep_bad_mode(struct pt_regs *regs)
+ 	return 0;
+ }
+ 
+-int platform_bad_mode(struct pt_regs *regs)
++int platform_bad_mode(struct pt_regs *regs, unsigned int esr)
+ {
+-	return pciep_bad_mode(regs);
++	if (pciep_bad_mode(regs))
++		return 1;
++
++	if ((esr >> 26) == 0x2f && (esr & 0x3) == 0x0) { /* Decode Error */
++		if (user_mode(regs)) {
++			struct task_struct *tsk = current;
++
++			pr_info("%s[%d]: serror converted to bus error\n",
++				tsk->comm, task_pid_nr(tsk));
++			force_signal_inject(SIGBUS, BUS_ADRERR, regs, regs->pc);
++		} else {
++			/* ignore */
++			pr_info("ignoring serror decode-error in kernel mode\n");
++		}
++		return 1;
++	}
++
++	return 0;
+ }
+ 
+ static void pciep_access_begin(const u64 pciepa)
+-- 
+2.17.1
+
