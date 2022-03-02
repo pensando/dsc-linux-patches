@@ -1,0 +1,37 @@
+From 1d45a3f47c0be28989cdbace166e4f73214ff88c Mon Sep 17 00:00:00 2001
+From: Masahiro Yamada <yamada.masahiro@socionext.com>
+Date: Tue, 21 Jan 2020 19:58:58 +0900
+Subject: [PATCH] mmc: sdhci-cadence: remove unneeded 'inline' marker
+
+'static inline' in .c files does not make much sense because
+functions may or may not be inlined irrespective of the 'inline'
+marker. It is just a hint.
+
+This function is quite small, so very likely to be inlined by the
+compiler's optimization (-O2 or -Os), but it is up to the compiler
+after all.
+
+Signed-off-by: Masahiro Yamada <yamada.masahiro@socionext.com>
+Acked-by: Adrian Hunter <adrian.hunter@intel.com>
+Link: https://lore.kernel.org/r/20200121105858.13325-1-yamada.masahiro@socionext.com
+Signed-off-by: Ulf Hansson <ulf.hansson@linaro.org>
+---
+ drivers/mmc/host/sdhci-cadence.c | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/drivers/mmc/host/sdhci-cadence.c b/drivers/mmc/host/sdhci-cadence.c
+index ae0ec27dd7cc..5827d3751b81 100644
+--- a/drivers/mmc/host/sdhci-cadence.c
++++ b/drivers/mmc/host/sdhci-cadence.c
+@@ -158,7 +158,7 @@ static int sdhci_cdns_phy_init(struct sdhci_cdns_priv *priv)
+ 	return 0;
+ }
+ 
+-static inline void *sdhci_cdns_priv(struct sdhci_host *host)
++static void *sdhci_cdns_priv(struct sdhci_host *host)
+ {
+ 	struct sdhci_pltfm_host *pltfm_host = sdhci_priv(host);
+ 
+-- 
+2.17.1
+
