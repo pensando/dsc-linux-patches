@@ -1,0 +1,75 @@
+From 0c28a9d05d9bd556e51bd9b976c01bda8deac2a1 Mon Sep 17 00:00:00 2001
+From: David Clear <dac2@pensando.io>
+Date: Fri, 26 Aug 2022 13:05:38 -0700
+Subject: [PATCH] arm64: fix platform_serror handling.
+
+The previous serror handling patch incorrectly hooked bad_mode()
+whereas it should have hooked do_serror().
+
+Signed-off-by: David Clear <dac2@pensando.io>
+---
+ arch/arm64/include/asm/traps.h |  2 +-
+ arch/arm64/kernel/traps.c      | 16 ++++++++--------
+ 2 files changed, 9 insertions(+), 9 deletions(-)
+
+diff --git a/arch/arm64/include/asm/traps.h b/arch/arm64/include/asm/traps.h
+index 091791dea808..1eb84aa359a9 100644
+--- a/arch/arm64/include/asm/traps.h
++++ b/arch/arm64/include/asm/traps.h
+@@ -29,7 +29,7 @@ void arm64_notify_segfault(unsigned long addr);
+ void arm64_force_sig_fault(int signo, int code, void __user *addr, const char *str);
+ void arm64_force_sig_mceerr(int code, void __user *addr, short lsb, const char *str);
+ void arm64_force_sig_ptrace_errno_trap(int errno, void __user *addr, const char *str);
+-int platform_bad_mode(struct pt_regs *regs, unsigned int esr);
++int platform_serror(struct pt_regs *regs, unsigned int esr);
+ 
+ /*
+  * Move regs->pc to next instruction and do necessary setup before it
+diff --git a/arch/arm64/kernel/traps.c b/arch/arm64/kernel/traps.c
+index 4b0e02cb68e0..976682bc4977 100644
+--- a/arch/arm64/kernel/traps.c
++++ b/arch/arm64/kernel/traps.c
+@@ -782,11 +782,6 @@ const char *esr_get_class_string(u32 esr)
+ 	return esr_class_str[ESR_ELx_EC(esr)];
+ }
+ 
+-int __weak platform_bad_mode(struct pt_regs *regs, unsigned int esr)
+-{
+-	return 0;
+-}
+-
+ /*
+  * bad_mode handles the impossible case in the exception vector.
+  * This is usually fatal, but give the platform a chance to handle
+@@ -794,9 +789,6 @@ int __weak platform_bad_mode(struct pt_regs *regs, unsigned int esr)
+  */
+ asmlinkage void bad_mode(struct pt_regs *regs, int reason, unsigned int esr)
+ {
+-	if (platform_bad_mode(regs, esr))
+-		return;
+-
+ 	console_verbose();
+ 
+ 	pr_crit("Bad mode in %s handler detected on CPU%d, code 0x%08x -- %s\n",
+@@ -906,10 +898,18 @@ bool arm64_is_fatal_ras_serror(struct pt_regs *regs, unsigned int esr)
+ 	}
+ }
+ 
++int __weak platform_serror(struct pt_regs *regs, unsigned int esr)
++{
++	return 0;
++}
++
+ asmlinkage void do_serror(struct pt_regs *regs, unsigned int esr)
+ {
+ 	const bool was_in_nmi = in_nmi();
+ 
++	if (platform_serror(regs, esr))
++		return;
++
+ 	if (!was_in_nmi)
+ 		nmi_enter();
+ 
+-- 
+2.17.1
+
