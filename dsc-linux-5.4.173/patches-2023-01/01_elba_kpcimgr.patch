@@ -1,9 +1,9 @@
-From 19bc58d0416d79ad3dc66d5be3bb641be86576a5 Mon Sep 17 00:00:00 2001
+From e7378b93cb50ec62a87d7db87fd7a896c74f9d99 Mon Sep 17 00:00:00 2001
 From: Hiren Mehta <hiren@pensando.io>
-Date: Fri, 13 Jan 2023 16:41:44 -0800
-Subject: [PATCH] drivers/soc/pensando: kpciemgr driver.
+Date: Tue, 17 Jan 2023 17:25:34 -0800
+Subject: [PATCH] drivers/soc/pensando: kpcimgr driver.
 
-kpciemgr driver enables the relocation of the module code to handle
+kpcimgr driver enables the relocation of the module code to handle
 Elba indirect PCIe transactions.
 
 Signed-off-by: Hiren Mehta <hiren@pensando.io>

@@ -6,14 +6,14 @@ based card; as of 01/16/2023.
 
 **00_pciep_regrd32.patch**<br>
 ```
-drivers/soc/pensando: refactor pciep_regrd32 for kpciemgr
+drivers/soc/pensando: refactor pciep_regrd32 for kpcimgr
 Renamed pciep_regrd to pciep_regrd32 and modified to
 take physical address and size as arguments.
 ```
 **01_elba_kpcimgr.patch**<br>
 ```
-drivers/soc/pensando: kpciemgr driver
-kpciemgr driver enables the relocation of the module code to handle
+drivers/soc/pensando: kpcimgr driver
+kpcimgr driver enables the relocation of the module code to handle
 Elba indirect PCIe transactions.
 ```
 **02_emmc_hardware_reset.patch**<br>

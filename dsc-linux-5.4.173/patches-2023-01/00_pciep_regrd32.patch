@@ -1,7 +1,7 @@
-From dc7ca11ca58d36427d791b1247bdec40d49fc21a Mon Sep 17 00:00:00 2001
+From 03bf50242412fd26b1baecb7ba37d8f7dbae9f10 Mon Sep 17 00:00:00 2001
 From: Hiren Mehta <hiren@pensando.io>
-Date: Fri, 13 Jan 2023 16:31:41 -0800
-Subject: [PATCH] drivers/soc/pensando: refactor pciep_regrd32 for kpciemgr
+Date: Tue, 17 Jan 2023 17:41:47 -0800
+Subject: [PATCH] drivers/soc/pensando: refactor pciep_regrd32 for kpcimgr
 
 Renamed pciep_regrd to pciep_regrd32 and modified to
 take physical address and size as arguments.
