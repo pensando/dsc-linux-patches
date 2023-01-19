@@ -1,0 +1,28 @@
+From d5d047b19f1c0d9ae8f3c834faf00a7db4e7eb8d Mon Sep 17 00:00:00 2001
+From: Hiren Mehta <hiren@pensando.io>
+Date: Thu, 19 Jan 2023 13:31:24 -0800
+Subject: [PATCH] drivers/mtd/spi-nor: Winbond w25q02nw flash support.
+
+Added Winbond w25q02nw flash support.
+
+Signed-off-by: Hiren Mehta <hiren@pensando.io>
+---
+ drivers/mtd/spi-nor/spi-nor.c | 2 ++
+ 1 file changed, 2 insertions(+)
+
+diff --git a/drivers/mtd/spi-nor/spi-nor.c b/drivers/mtd/spi-nor/spi-nor.c
+index 1d48f648b1af..a4498de554b4 100644
+--- a/drivers/mtd/spi-nor/spi-nor.c
++++ b/drivers/mtd/spi-nor/spi-nor.c
+@@ -2488,6 +2488,8 @@ static const struct flash_info spi_nor_ids[] = {
+ 			     SECT_4K | SPI_NOR_DUAL_READ | SPI_NOR_QUAD_READ) },
+ 	{ "w25m512jv", INFO(0xef7119, 0, 64 * 1024, 1024,
+ 			SECT_4K | SPI_NOR_QUAD_READ | SPI_NOR_DUAL_READ) },
++	{ "w25q02nw", INFO(0xef8022, 0, 64 * 1024, 4096,
++			SECT_4K | SPI_NOR_DUAL_READ | SPI_NOR_QUAD_READ) },
+ 
+ 	/* Catalyst / On Semiconductor -- non-JEDEC */
+ 	{ "cat25c11", CAT25_INFO(  16, 8, 16, 1, SPI_NOR_NO_ERASE | SPI_NOR_NO_FR) },
+-- 
+2.17.1
+
