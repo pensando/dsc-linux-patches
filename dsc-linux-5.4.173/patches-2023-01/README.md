@@ -41,3 +41,8 @@ Reset RD1173 when busy condition is detected even after transfer
 completion timeout. Also, enable sysfs access to RD1173 master
 registers and fix statistics as multiple cmdstat bits can be set.
 ```
+**06_winbond_w25q02nw.patch**<br>
+```
+Winbond w25q02nw flash support.
+Added Winbond w25q02nw flash support.
+```
