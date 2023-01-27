@@ -1,0 +1,30 @@
+From eaf594b476518557e9f32a624a4c64a8b6054ad5 Mon Sep 17 00:00:00 2001
+From: David Clear <dac2@pensando.io>
+Date: Thu, 26 Jan 2023 17:24:27 -0800
+Subject: [PATCH] mtd: spi-nor: Add support for Winbond w25q02nw flash.
+
+This patch adds support for the 2Gbit Winbond w25q02nw flash,
+which supports Dual I/O and 4-byte opcodes.
+
+Signed-off-by: David Clear <dac2@pensando.io>
+---
+ drivers/mtd/spi-nor/spi-nor.c | 3 +++
+ 1 file changed, 3 insertions(+)
+
+diff --git a/drivers/mtd/spi-nor/spi-nor.c b/drivers/mtd/spi-nor/spi-nor.c
+index a0d40f7a234f..8f68f2a6dfc2 100644
+--- a/drivers/mtd/spi-nor/spi-nor.c
++++ b/drivers/mtd/spi-nor/spi-nor.c
+@@ -1167,6 +1167,9 @@ static const struct flash_info spi_nor_ids[] = {
+ 	{ "w25q256", INFO(0xef4019, 0, 64 * 1024, 512, SECT_4K | SPI_NOR_DUAL_READ | SPI_NOR_QUAD_READ) },
+ 	{ "w25m512jv", INFO(0xef7119, 0, 64 * 1024, 1024,
+ 			SECT_4K | SPI_NOR_QUAD_READ | SPI_NOR_DUAL_READ) },
++	{ "w25q02nw", INFO(0xef8022, 0, 64 * 1024, 4096,
++			    SECT_4K | SPI_NOR_DUAL_READ | SPI_NOR_QUAD_READ |
++			    SPI_NOR_4B_OPCODES) },
+ 
+ 	/* Catalyst / On Semiconductor -- non-JEDEC */
+ 	{ "cat25c11", CAT25_INFO(  16, 8, 16, 1, SPI_NOR_NO_ERASE | SPI_NOR_NO_FR) },
+-- 
+2.17.1
+
