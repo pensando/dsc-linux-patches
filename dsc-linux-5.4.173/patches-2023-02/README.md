@@ -14,3 +14,8 @@ defconfig: cleanup elba_defconfig
 Remove CONFIG_MFD_SYSCON as that is automatically enabled when
 MFD_PENSANDO_ELBASR is enabled.
 ```
+**02_elba_psci.patch**<br>
+```
+arch/arm64/boot/dts: psci support
+Change CPU enable-method from 'spin-table' to 'psci'.
+```
