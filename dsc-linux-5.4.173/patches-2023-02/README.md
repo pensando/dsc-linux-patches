@@ -8,3 +8,9 @@ drivers/soc/pensando: penfw driver
 penfw driver provides sysfs and ioctl interface for the userspace
 to communicate to the bl31 secure monitor
 ```
+**01_elba_defconfig_cleanup.patch**<br>
+```
+defconfig: cleanup elba_defconfig
+Remove CONFIG_MFD_SYSCON as that is automatically enabled when
+MFD_PENSANDO_ELBASR is enabled.
+```
