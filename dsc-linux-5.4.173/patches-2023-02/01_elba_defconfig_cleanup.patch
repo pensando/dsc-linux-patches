@@ -1,0 +1,28 @@
+From df47ed772b7e36d3a7463322c763056a971f2508 Mon Sep 17 00:00:00 2001
+From: Hiren Mehta <hiren@pensando.io>
+Date: Thu, 16 Feb 2023 17:19:40 -0800
+Subject: [PATCH] defconfig: cleanup elba_defconfig
+
+Remove CONFIG_MFD_SYSCON as that is automatically enabled when
+MFD_PENSANDO_ELBASR is enabled.
+
+Signed-off-by: Hiren Mehta <hiren@pensando.io>
+---
+ arch/arm64/configs/elba_defconfig | 1 -
+ 1 file changed, 1 deletion(-)
+
+diff --git a/arch/arm64/configs/elba_defconfig b/arch/arm64/configs/elba_defconfig
+index b89c4412ec62..f9f051a7a241 100644
+--- a/arch/arm64/configs/elba_defconfig
++++ b/arch/arm64/configs/elba_defconfig
+@@ -229,7 +229,6 @@ CONFIG_WATCHDOG=y
+ CONFIG_SOFT_WATCHDOG=y
+ CONFIG_DW_WATCHDOG=y
+ CONFIG_MFD_PENSANDO_ELBASR=y
+-CONFIG_MFD_SYSCON=y
+ # CONFIG_VGA_ARB is not set
+ # CONFIG_HID is not set
+ # CONFIG_USB_SUPPORT is not set
+-- 
+2.17.1
+

@@ -1,6 +1,6 @@
-From 81bcc0f4ce6f562f3e161700b4c731094a8739d5 Mon Sep 17 00:00:00 2001
+From 81a6b6b129a3e92cde9d7468735b3352935d3c00 Mon Sep 17 00:00:00 2001
 From: Hiren Mehta <hiren@pensando.io>
-Date: Wed, 15 Feb 2023 18:04:24 -0800
+Date: Thu, 16 Feb 2023 17:05:19 -0800
 Subject: [PATCH] drivers/soc/pensando: penfw driver
 
 penfw driver provides sysfs and ioctl interface for the userspace
@@ -9,7 +9,7 @@ to communicate to the bl31 secure monitor
 Signed-off-by: Hiren Mehta <hiren@pensando.io>
 ---
  arch/arm64/boot/dts/pensando/elba-asic.dts |   8 +
- arch/arm64/configs/elba_defconfig          |   2 +-
+ arch/arm64/configs/elba_defconfig          |   1 +
  drivers/soc/pensando/Kconfig               |   6 +
  drivers/soc/pensando/Makefile              |   1 +
  drivers/soc/pensando/penfw.h               |  35 ++
@@ -17,7 +17,7 @@ Signed-off-by: Hiren Mehta <hiren@pensando.io>
  drivers/soc/pensando/penfw_smc.c           |  63 ++++
  drivers/soc/pensando/penfw_sysfs.c         | 420 +++++++++++++++++++++
  drivers/soc/pensando/penfw_sysfs.h         |  11 +
- 9 files changed, 690 insertions(+), 1 deletion(-)
+ 9 files changed, 690 insertions(+)
  create mode 100644 drivers/soc/pensando/penfw.h
  create mode 100644 drivers/soc/pensando/penfw_drv.c
  create mode 100644 drivers/soc/pensando/penfw_smc.c
@@ -41,18 +41,10 @@ index 70d0dbd3887b..a1ba7b245949 100644
 +       };
 +};
 diff --git a/arch/arm64/configs/elba_defconfig b/arch/arm64/configs/elba_defconfig
-index 5e26a8129a46..f9f051a7a241 100644
+index 5e26a8129a46..b89c4412ec62 100644
 --- a/arch/arm64/configs/elba_defconfig
 +++ b/arch/arm64/configs/elba_defconfig
-@@ -229,7 +229,6 @@ CONFIG_WATCHDOG=y
- CONFIG_SOFT_WATCHDOG=y
- CONFIG_DW_WATCHDOG=y
- CONFIG_MFD_PENSANDO_ELBASR=y
--CONFIG_MFD_SYSCON=y
- # CONFIG_VGA_ARB is not set
- # CONFIG_HID is not set
- # CONFIG_USB_SUPPORT is not set
-@@ -248,6 +247,7 @@ CONFIG_UIO=y
+@@ -248,6 +248,7 @@ CONFIG_UIO=y
  # CONFIG_HISILICON_ERRATUM_161010101 is not set
  # CONFIG_ARM64_ERRATUM_858921 is not set
  # CONFIG_IOMMU_SUPPORT is not set
