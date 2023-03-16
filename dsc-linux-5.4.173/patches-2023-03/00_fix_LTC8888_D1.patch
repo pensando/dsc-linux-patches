@@ -1,0 +1,28 @@
+From b1f629e3349c620f0ec162cc55b4dd382b705ddb Mon Sep 17 00:00:00 2001
+From: Hiren Mehta <hiren@pensando.io>
+Date: Wed, 15 Mar 2023 20:27:26 -0700
+Subject: [PATCH] drivers/hwmon: Fix LTC3888-1 support.
+
+This patch fixes support for LTC3888-1 driver.
+
+Signed-off-by: Hiren Mehta <hiren@pensando.io>
+---
+ drivers/hwmon/pmbus/ltc2978.c | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/drivers/hwmon/pmbus/ltc2978.c b/drivers/hwmon/pmbus/ltc2978.c
+index eb5d4310feba..a0b39779e0df 100644
+--- a/drivers/hwmon/pmbus/ltc2978.c
++++ b/drivers/hwmon/pmbus/ltc2978.c
+@@ -600,7 +600,7 @@ static int ltc2978_get_id(struct i2c_client *client)
+ 		return ltc3886;
+ 	else if (chip_id == LTC3887_ID)
+ 		return ltc3887;
+-	else if (chip_id == LTC3888_ID)
++	else if (chip_id == LTC3888_ID || chip_id == LTC3888_ID_D1)
+ 		return ltc3888;
+ 	else if (chip_id == LTM2987_ID_A || chip_id == LTM2987_ID_B)
+ 		return ltm2987;
+-- 
+2.17.1
+
