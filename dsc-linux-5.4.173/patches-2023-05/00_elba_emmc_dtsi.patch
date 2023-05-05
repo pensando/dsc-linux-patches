@@ -1,0 +1,29 @@
+From 2f12778e895a40f4a5f5b57af50d3531e4324590 Mon Sep 17 00:00:00 2001
+From: David Clear <dac2@pensando.io>
+Date: Fri, 5 May 2023 10:20:01 -0700
+Subject: [PATCH] elba.dtsi: Improved sdclk and sdclk-hsmmc timing.
+
+This patch sets the Elba EMMC standard and high-speed delays to zero,
+to improve setup timing.
+
+Signed-off-by: David Clear <dac2@pensando.io>
+---
+ arch/arm64/boot/dts/pensando/elba.dtsi | 2 ++
+ 1 file changed, 2 insertions(+)
+
+diff --git a/arch/arm64/boot/dts/pensando/elba.dtsi b/arch/arm64/boot/dts/pensando/elba.dtsi
+index a2c0a5807e78..1d3aaf8f0c9f 100644
+--- a/arch/arm64/boot/dts/pensando/elba.dtsi
++++ b/arch/arm64/boot/dts/pensando/elba.dtsi
+@@ -265,6 +265,8 @@
+ 			cdns,phy-input-delay-legacy = <0x4>;
+ 			cdns,phy-input-delay-sd-uhs-sdr50 = <0x6>;
+ 			cdns,phy-input-delay-sd-uhs-ddr50 = <0x16>;
++			cdns,phy-dll-delay-sdclk = <0>;
++			cdns,phy-dll-delay-sdclk-hsmmc = <0>;
+ 			cdns,mmc-ddr-1_8v;
+ 			status = "disabled";
+ 		};
+-- 
+2.17.1
+
