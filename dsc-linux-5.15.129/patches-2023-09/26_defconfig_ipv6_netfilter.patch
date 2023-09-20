@@ -1,0 +1,37 @@
+From d7b93b855d190998d819adefe59cf786cf7c6cff Mon Sep 17 00:00:00 2001
+From: David Clear <dclear@amd.com>
+Date: Wed, 20 Sep 2023 11:14:08 -0700
+Subject: [PATCH] arm64/configs: Add CONFIG_IP6_NF_IPTABLES for elba
+
+This commit adds IPV6 netfilter support to the elba_defconfig file.
+
+Signed-off-by: David Clear <dclear@amd.com>
+---
+ arch/arm64/configs/elba_defconfig | 11 +++++++++++
+ 1 file changed, 11 insertions(+)
+
+diff --git a/arch/arm64/configs/elba_defconfig b/arch/arm64/configs/elba_defconfig
+index c4bc0f0ad899..d95ef62c8d8b 100644
+--- a/arch/arm64/configs/elba_defconfig
++++ b/arch/arm64/configs/elba_defconfig
+@@ -123,6 +123,17 @@ CONFIG_IP_NF_TARGET_REJECT=y
+ CONFIG_IP_NF_MANGLE=y
+ CONFIG_IP_NF_TARGET_ECN=y
+ CONFIG_IP_NF_TARGET_TTL=y
++CONFIG_NF_REJECT_IPV6=y
++CONFIG_IP6_NF_IPTABLES=y
++CONFIG_IP6_NF_MATCH_AH=y
++CONFIG_IP6_NF_MATCH_EUI64=y
++CONFIG_IP6_NF_MATCH_FRAG=y
++CONFIG_IP6_NF_MATCH_OPTS=y
++CONFIG_IP6_NF_MATCH_HL=y
++CONFIG_IP6_NF_MATCH_IPV6HEADER=y
++CONFIG_IP6_NF_MATCH_MH=y
++CONFIG_IP6_NF_MATCH_RT=y
++CONFIG_IP6_NF_MATCH_SRH=y
+ CONFIG_VLAN_8021Q=y
+ CONFIG_NET_PKTGEN=y
+ # CONFIG_WIRELESS is not set
+-- 
+2.17.1
+
