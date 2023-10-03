@@ -1,0 +1,30 @@
+From af7271e151d02713077d88e991c86cfe900f9ac5 Mon Sep 17 00:00:00 2001
+From: David Clear <dclear@amd.com>
+Date: Tue, 5 Sep 2023 17:02:03 -0700
+Subject: [PATCH] drivers/mtd/spi-nor: Winbond w25q02nw flash support.
+
+Added Winbond w25q02nw flash support.
+
+Product page: https://www.winbond.com/hq/product/code-storage-flash-memory/serial-nor-flash/?__locale=en&partNo=W25Q02NW_DTR
+
+Signed-off-by: David Clear <dclear@amd.com>
+---
+ drivers/mtd/spi-nor/winbond.c | 2 ++
+ 1 file changed, 2 insertions(+)
+
+diff --git a/drivers/mtd/spi-nor/winbond.c b/drivers/mtd/spi-nor/winbond.c
+index 96573f61caf5..fd0a0bb62263 100644
+--- a/drivers/mtd/spi-nor/winbond.c
++++ b/drivers/mtd/spi-nor/winbond.c
+@@ -102,6 +102,8 @@ static const struct flash_info winbond_parts[] = {
+ 			    SECT_4K | SPI_NOR_QUAD_READ | SPI_NOR_DUAL_READ) },
+ 	{ "w25q512jvq", INFO(0xef4020, 0, 64 * 1024, 1024,
+ 			     SECT_4K | SPI_NOR_DUAL_READ | SPI_NOR_QUAD_READ) },
++	{ "w25q02nw", INFO(0xef8022, 0, 64 * 1024, 4096,
++			    SECT_4K | SPI_NOR_DUAL_READ | SPI_NOR_QUAD_READ) },
+ };
+ 
+ /**
+-- 
+2.17.1
+
