@@ -1,0 +1,87 @@
+From ddf7bb2ff5022de5ff08c7030ad82ff3cb684aae Mon Sep 17 00:00:00 2001
+From: David Clear <dclear@amd.com>
+Date: Tue, 17 Oct 2023 14:39:01 -0700
+Subject: [PATCH] drivers/soc/pensando: Add sysfs entries for PenTrust software
+ versions
+
+This commit adds the sw_version and crypto_version sysfs nodes.
+
+Signed-off-by: David Clear <dclear@amd.com>
+---
+ drivers/soc/pensando/penfw.h       |  1 +
+ drivers/soc/pensando/penfw_sysfs.c | 35 ++++++++++++++++++++++++++++++
+ 2 files changed, 36 insertions(+)
+
+diff --git a/drivers/soc/pensando/penfw.h b/drivers/soc/pensando/penfw.h
+index 429f80d3de77..37ee4c0a88e2 100644
+--- a/drivers/soc/pensando/penfw.h
++++ b/drivers/soc/pensando/penfw.h
+@@ -17,6 +17,7 @@ enum penfw_opcodes {
+ 	PENFW_OP_GET_BOOT_LCS,
+ 	PENFW_OP_GET_NEXT_LCS,
+ 	PENFW_OP_COMMIT_LCS_PROD,
++	PENFW_OP_GET_PENTRUST_VERSION,
+ 	PENFW_OPCODE_MAX,
+ };
+ 
+diff --git a/drivers/soc/pensando/penfw_sysfs.c b/drivers/soc/pensando/penfw_sysfs.c
+index 92ac65af5ec3..91aa1698ad8d 100644
+--- a/drivers/soc/pensando/penfw_sysfs.c
++++ b/drivers/soc/pensando/penfw_sysfs.c
+@@ -46,6 +46,34 @@ static ssize_t pentrust_show(struct kobject *kobj, struct kobj_attribute *attr,
+ 	}
+ }
+ 
++static ssize_t pentrust_show_version(struct kobject *kobj, struct kobj_attribute *attr,
++			     char *buf)
++{
++	struct penfw_call_args args = {0};
++	int major, minor1, minor2;
++
++	args.a1 = PENFW_OP_GET_PENTRUST_VERSION;
++	penfw_smc(&args);
++
++	if (args.a0 < 0) {
++		return sprintf(buf, "Error\n");
++	}
++
++	if (!strcmp(attr->attr.name, "sw_version")) {
++		major = args.a1 >> 32;
++		minor1 = (args.a1 & 0xffff0000) >> 16;
++		minor2 = args.a1 & 0xffff;
++		return sprintf(buf, "%d.%d.%d\n", major, minor1, minor2);
++	} else if (!strcmp(attr->attr.name, "crypto_version")) {
++		major = args.a2 >> 32;
++		minor1 = (args.a2 & 0xffff0000) >> 16;
++		minor2 = args.a2 & 0xffff;
++		return sprintf(buf, "%d.%d.%d\n", major, minor1, minor2);
++	} else {
++		return sprintf(buf, "\n");
++	}
++}
++
+ static ssize_t pentrust_store(struct kobject *kobj, struct kobj_attribute *attr,
+ 			      const char *buf, size_t count)
+ {
+@@ -224,11 +252,18 @@ static struct kobj_attribute pentrust_attr_img_slot = __ATTR(image_slot, 0400,
+ static struct kobj_attribute pentrust_attr_upg = __ATTR(upgrade, 0600,
+ 							pentrust_show,
+ 							pentrust_store);
++static struct kobj_attribute pentrust_attr_sw_ver = __ATTR(sw_version, 0400,
++							pentrust_show_version, NULL);
++
++static struct kobj_attribute pentrust_attr_crypto_ver = __ATTR(crypto_version, 0400,
++							pentrust_show_version, NULL);
+ 
+ static struct attribute *pentrust_attrs[] = {
+ 	&pentrust_attr_ver.attr,
+ 	&pentrust_attr_img_slot.attr,
+ 	&pentrust_attr_upg.attr,
++	&pentrust_attr_sw_ver.attr,
++	&pentrust_attr_crypto_ver.attr,
+ 	NULL
+ };
+ 
+-- 
+2.17.1
+
