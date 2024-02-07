@@ -1,0 +1,276 @@
+From cbebc9905f8c59075ebd436d3e7d738571f187a3 Mon Sep 17 00:00:00 2001
+From: David Clear <dclear@amd.com>
+Date: Wed, 7 Feb 2024 10:47:20 -0800
+Subject: [PATCH] drivers/soc/pensando/cap_mem.c: Support DM region mapping.
+
+Migrate the standard device memory ranges out of cap_mem.c and
+into the ASIC-specific dts file.  This gives us ASIC-specific
+exports, without ugly #ifdefs in the driver.
+
+Support a CAPMEM_GET_RANGES2 ioctl that provides a disctinct type
+enumeration for bypass regions.  This gives userspace the capability
+to find the bypass region programatically.
+
+Signed-off-by: David Clear <dclear@amd.com>
+---
+ arch/arm64/boot/dts/pensando/elba.dtsi    |   4 +
+ drivers/soc/pensando/cap_mem.c            | 100 ++++++++++++++--------
+ drivers/soc/pensando/capmem_dev.h         |   5 +-
+ include/dt-bindings/soc/pensando,capmem.h |  14 +++
+ 4 files changed, 86 insertions(+), 37 deletions(-)
+ create mode 100644 include/dt-bindings/soc/pensando,capmem.h
+
+diff --git a/arch/arm64/boot/dts/pensando/elba.dtsi b/arch/arm64/boot/dts/pensando/elba.dtsi
+index 9f8e35c41557..8dd5e5426a48 100644
+--- a/arch/arm64/boot/dts/pensando/elba.dtsi
++++ b/arch/arm64/boot/dts/pensando/elba.dtsi
+@@ -3,6 +3,7 @@
+ 
+ #include <dt-bindings/gpio/gpio.h>
+ #include "dt-bindings/interrupt-controller/arm-gic.h"
++#include "dt-bindings/soc/pensando,capmem.h"
+ 
+ / {
+ 	interrupt-parent = <&gic>;
+@@ -62,6 +63,9 @@
+ 
+ 	capmem {
+ 		compatible = "pensando,capmem";
++		pensando,capmem-fixed-ranges =
++			<0x0 0x200000 0x0 0x6fe00000 DSC_MEM_ATTR_DEVICE>,
++			<0x4 0x0 0x0 0x400000 DSC_MEM_ATTR_DEVICE>;
+ 	};
+ 
+ 	soc: soc {
+diff --git a/drivers/soc/pensando/cap_mem.c b/drivers/soc/pensando/cap_mem.c
+index 50997896d439..b39ef6953f0e 100644
+--- a/drivers/soc/pensando/cap_mem.c
++++ b/drivers/soc/pensando/cap_mem.c
+@@ -14,11 +14,11 @@
+ #include <linux/fcntl.h>
+ #include <linux/init.h>
+ #include <linux/pagemap.h>
++#include <linux/sort.h>
+ #include <linux/pfn_t.h>
++#include <dt-bindings/soc/pensando,capmem.h>
+ #include "capmem_dev.h"
+ 
+-#define DSC_MEM_ATTR_COHERENT	0x1	// Memory range is coherent
+-
+ /*
+  * Memory range information provided by U-Boot on the kernel commandline:
+  * Syntax:
+@@ -91,6 +91,7 @@ static int cap_mem_mmap(struct file *file, struct vm_area_struct *vma)
+ 		break;
+ 
+ 	case CAPMEM_TYPE_NONCOHERENT:
++	case CAPMEM_TYPE_BYPASS:
+ 		/*
+ 		 * An inner shareable cached mapping on a noncoherence range
+ 		 * is invalid, so only accept non-cached mapping requests.
+@@ -127,12 +128,24 @@ static int cap_mem_mmap(struct file *file, struct vm_area_struct *vma)
+ 	return 0;
+ }
+ 
++/*
++ * Map a capmem range type to a legacy type for v1 commands
++ */
++static int compat_range_type(unsigned int cmd, int type)
++{
++	if (cmd == CAPMEM_GET_RANGES && type == CAPMEM_TYPE_BYPASS)
++		return CAPMEM_TYPE_NONCOHERENT;
++	else
++		return type;
++}
++
+ static long cap_mem_unlocked_ioctl(struct file *file,
+ 		unsigned int cmd, unsigned long arg)
+ {
+ 	void __user *p = (void __user *)arg;
+ 	struct capmem_range __user *rp;
+ 	struct capmem_ranges_args gr;
++	struct capmem_range range;
+ 	int i;
+ 
+ 	switch (cmd) {
+@@ -140,13 +153,16 @@ static long cap_mem_unlocked_ioctl(struct file *file,
+ 		return put_user(nmem_ranges, (int __user *)p);
+ 
+ 	case CAPMEM_GET_RANGES:
++	case CAPMEM_GET_RANGES2:
+ 		if (copy_from_user(&gr, p, sizeof(gr)))
+ 			return -EFAULT;
+ 		rp = (struct capmem_range __user *)gr.range;
+ 		for (i = 0; i < gr.nranges; i++) {
+ 			if (i >= nmem_ranges)
+ 				return i;
+-			if (copy_to_user(rp, &mem_range[i], sizeof(*rp)))
++			range = mem_range[i];
++			range.type = compat_range_type(cmd, range.type);
++			if (copy_to_user(rp, &range, sizeof(*rp)))
+ 				return -EFAULT;
+ 			++rp;
+ 		}
+@@ -209,52 +225,38 @@ static int __init parse_memory_ranges(struct platform_device *pdev, char *s)
+ }
+ 
+ /*
+- * Device space is mapped out here.
+- */
+-static const struct {
+-	uint64_t start;
+-	uint64_t len;
+-} init_device_ranges[] = {
+-	{ 0x00200000, 0x6fe00000 }, // 00200000...6fffffff
+-};
+-
+-static void load_static_entries(void)
+-{
+-	int i;
+-
+-	for (i = 0; i < ARRAY_SIZE(init_device_ranges); i++) {
+-		capmem_add_range(init_device_ranges[i].start,
+-				 init_device_ranges[i].len,
+-				 CAPMEM_TYPE_DEVICE);
+-	}
+-}
+-
+-/*
+- * Load ranges from device-tree (installed by u-boot):
+- * The pensando,capmem-ranges parameter is a table of 5 words per row.
+- * The table format is:
++ * Load ranges from the device-tree
++ * Each range row comprises 5 words:
+  *	<start_hi start_lo size_hi size_lo attr>
+- *	attr is { unused:30, bypass:1, coherent:1 }
++ *	attr is { unused:29, device:1, bypass:1, coherent:1 }
+  */
+-static int load_of_ranges(struct platform_device *pdev)
++static int load_of_ranges(struct platform_device *pdev, const char *pname)
+ {
+ 	u32 entries[CAPMEM_MAX_RANGES][5];
+ 	int r, n, i, type;
+ 	u64 start, len;
++	u32 attr;
+ 
+ 	n = of_property_read_variable_u32_array(pdev->dev.of_node,
+-		"pensando,capmem-ranges", (u32 *)entries,
+-		0, sizeof(entries) / sizeof(u32));
++			pname, (u32 *)entries, 0,
++			sizeof (entries) / sizeof (u32));
+ 	if (n < 0)
+ 		return -ENOENT;
+ 	if (n % 5 != 0) {
+-		dev_err(&pdev->dev, "of pensando,capmem-ranges invalid\n");
++		dev_err(&pdev->dev, "of %s invalid\n", pname);
+ 		return -ENODEV;
+ 	}
+ 	n /= 5;
+ 	for (i = 0; i < n; i++) {
+-		type = (entries[i][4] & DSC_MEM_ATTR_COHERENT) ?
+-			CAPMEM_TYPE_COHERENT : CAPMEM_TYPE_NONCOHERENT;
++		attr = entries[i][4];
++		if (attr & DSC_MEM_ATTR_DEVICE)
++			type = CAPMEM_TYPE_DEVICE;
++		else if (attr & DSC_MEM_ATTR_BYPASS)
++			type = CAPMEM_TYPE_BYPASS;
++		else if (attr & DSC_MEM_ATTR_COHERENT)
++			type = CAPMEM_TYPE_COHERENT;
++		else
++			type = CAPMEM_TYPE_NONCOHERENT;
+ 		start = ((u64)entries[i][0] << 32) | entries[i][1];
+ 		len   = ((u64)entries[i][2] << 32) | entries[i][3];
+ 		r = capmem_add_range(start, len, type);
+@@ -264,19 +266,45 @@ static int load_of_ranges(struct platform_device *pdev)
+ 	return 0;
+ }
+ 
++static int cmp_ranges(const void *a, const void *b)
++{
++	const struct capmem_range *r1 = a;
++	const struct capmem_range *r2 = b;
++
++	if (r1->start == r2->start)
++		return 0;
++	else
++		return (r1->start < r2->start) ? -1 : 1;
++}
++
+ static int capmem_probe(struct platform_device *pdev)
+ {
+ 	int r;
+ 
+ 	dev_info(&pdev->dev, "Loading capmem driver\n");
+-	load_static_entries();
+-	r = load_of_ranges(pdev);
++
++	/* load the fixed ranges from the device-tree */
++	r = load_of_ranges(pdev, "pensando,capmem-fixed-ranges");
++	if (r == -ENOENT)
++		return r;
++
++	/*
++	 * load the ranges installed by u-boot; either in the device-tree
++	 * or provided as a module parameter.
++	 */
++	r = load_of_ranges(pdev, "pensando,capmem-ranges");
+ 	if (r == -ENOENT) {
+ 		/* fallback to the capmem= variable */
+ 		r = parse_memory_ranges(pdev, ranges);
+ 		if (r)
+ 			return r;
+ 	}
++
++	/*
++	 * Sort ranges by ascending physical address.
++	 */
++	sort(mem_range, nmem_ranges, sizeof(mem_range[0]), cmp_ranges, NULL);
++
+ 	return misc_register(&cap_mem_dev);
+ }
+ 
+diff --git a/drivers/soc/pensando/capmem_dev.h b/drivers/soc/pensando/capmem_dev.h
+index ac8547ee1142..8ac07fd7b0e6 100644
+--- a/drivers/soc/pensando/capmem_dev.h
++++ b/drivers/soc/pensando/capmem_dev.h
+@@ -18,7 +18,9 @@ struct capmem_range {
+ enum {
+ 	CAPMEM_TYPE_DEVICE,
+ 	CAPMEM_TYPE_COHERENT,
+-	CAPMEM_TYPE_NONCOHERENT
++	CAPMEM_TYPE_NONCOHERENT,
++	/* CAPMEM_GET_RANGES2 */
++	CAPMEM_TYPE_BYPASS,
+ };
+ 
+ struct capmem_ranges_args {
+@@ -30,5 +32,6 @@ struct capmem_ranges_args {
+ 
+ #define CAPMEM_GET_NRANGES	_IOR(CAPMEM_IOCTL_NUM, 1, int)
+ #define CAPMEM_GET_RANGES	_IOWR(CAPMEM_IOCTL_NUM, 2, struct capmem_ranges_args)
++#define CAPMEM_GET_RANGES2	_IOWR(CAPMEM_IOCTL_NUM, 3, struct capmem_ranges_args)
+ 
+ #endif
+diff --git a/include/dt-bindings/soc/pensando,capmem.h b/include/dt-bindings/soc/pensando,capmem.h
+new file mode 100644
+index 000000000000..d48c89b9af77
+--- /dev/null
++++ b/include/dt-bindings/soc/pensando,capmem.h
+@@ -0,0 +1,14 @@
++/* SPDX-License-Identifier: (GPL-2.0+ OR MIT) */
++
++#ifndef _DT_BINDINGS_PENSANDO_CAPMEM_H
++#define _DT_BINDINGS_PENSANDO_CAPMEM_H
++
++/*
++ * Memory range attrbutes passed in via the device-tree
++ */
++#define DSC_MEM_ATTR_NONCOHERENT	0x0	/* range is DMA noncoherent */
++#define DSC_MEM_ATTR_COHERENT		0x1	/* range is DMA coherent */
++#define DSC_MEM_ATTR_BYPASS		0x2	/* range is LLC bypass */
++#define DSC_MEM_ATTR_DEVICE		0x4	/* range is device */
++
++#endif /* _DT_BINDINGS_PENSANDO_CAPMEM_H */
+-- 
+2.17.1
+
