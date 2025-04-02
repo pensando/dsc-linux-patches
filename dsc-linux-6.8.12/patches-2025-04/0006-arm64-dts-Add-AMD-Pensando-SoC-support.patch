@@ -1,0 +1,3136 @@
+From 5aa804c753d823ed7e5aa409ced6b8636783bc01 Mon Sep 17 00:00:00 2001
+From: Brad Larson <bradley.larson@amd.com>
+Date: Wed, 2 Apr 2025 11:44:27 -0700
+Subject: [PATCH 06/17] arm64: dts: Add AMD Pensando SoC support
+
+Includes Elba, Giglio and Salina SoCs
+
+Signed-off-by: Brad Larson <bradley.larson@amd.com>
+---
+ arch/arm64/boot/dts/amd/Makefile              |   6 +
+ arch/arm64/boot/dts/amd/elba-asic-common.dtsi |  42 ++
+ arch/arm64/boot/dts/amd/elba-asic-memory.dtsi |  20 +
+ arch/arm64/boot/dts/amd/elba-asic.dts         |   2 +
+ arch/arm64/boot/dts/amd/elba-mdev.dtsi        |  76 +++
+ arch/arm64/boot/dts/amd/elba.dtsi             | 151 ++++++
+ .../boot/dts/amd/giglio-asic-common.dtsi      | 141 ++++++
+ arch/arm64/boot/dts/amd/giglio-asic.dts       |  30 ++
+ arch/arm64/boot/dts/amd/giglio.dtsi           | 439 ++++++++++++++++++
+ .../dts/amd/salina-16core-spin-table.dtsi     | 166 +++++++
+ arch/arm64/boot/dts/amd/salina-16core.dtsi    | 166 +++++++
+ .../boot/dts/amd/salina-4core-spin-table.dtsi |  58 +++
+ arch/arm64/boot/dts/amd/salina-a35-asic.dts   |  92 ++++
+ .../arm64/boot/dts/amd/salina-a35-common.dtsi |  45 ++
+ arch/arm64/boot/dts/amd/salina-a35-haps.dts   |  91 ++++
+ arch/arm64/boot/dts/amd/salina-a35.dtsi       | 298 ++++++++++++
+ arch/arm64/boot/dts/amd/salina-asic.dts       |  80 ++++
+ arch/arm64/boot/dts/amd/salina-asic.dtsi      | 281 +++++++++++
+ .../arm64/boot/dts/amd/salina-haps-16core.dts |  98 ++++
+ arch/arm64/boot/dts/amd/salina-haps-4core.dts |  71 +++
+ .../boot/dts/amd/salina-haps-common.dtsi      | 109 +++++
+ arch/arm64/boot/dts/amd/salina-haps.dtsi      | 308 ++++++++++++
+ arch/arm64/boot/dts/amd/salina-n1-common.dtsi |  62 +++
+ .../boot/dts/amd/salina-n1-flash-parts.dtsi   |  17 +
+ include/dt-bindings/soc/pensando,capmem.h     |  14 +
+ 25 files changed, 2863 insertions(+)
+ create mode 100644 arch/arm64/boot/dts/amd/elba-asic-memory.dtsi
+ create mode 100644 arch/arm64/boot/dts/amd/elba-mdev.dtsi
+ create mode 100644 arch/arm64/boot/dts/amd/giglio-asic-common.dtsi
+ create mode 100644 arch/arm64/boot/dts/amd/giglio-asic.dts
+ create mode 100644 arch/arm64/boot/dts/amd/giglio.dtsi
+ create mode 100644 arch/arm64/boot/dts/amd/salina-16core-spin-table.dtsi
+ create mode 100644 arch/arm64/boot/dts/amd/salina-16core.dtsi
+ create mode 100644 arch/arm64/boot/dts/amd/salina-4core-spin-table.dtsi
+ create mode 100644 arch/arm64/boot/dts/amd/salina-a35-asic.dts
+ create mode 100644 arch/arm64/boot/dts/amd/salina-a35-common.dtsi
+ create mode 100644 arch/arm64/boot/dts/amd/salina-a35-haps.dts
+ create mode 100644 arch/arm64/boot/dts/amd/salina-a35.dtsi
+ create mode 100644 arch/arm64/boot/dts/amd/salina-asic.dts
+ create mode 100644 arch/arm64/boot/dts/amd/salina-asic.dtsi
+ create mode 100644 arch/arm64/boot/dts/amd/salina-haps-16core.dts
+ create mode 100644 arch/arm64/boot/dts/amd/salina-haps-4core.dts
+ create mode 100644 arch/arm64/boot/dts/amd/salina-haps-common.dtsi
+ create mode 100644 arch/arm64/boot/dts/amd/salina-haps.dtsi
+ create mode 100644 arch/arm64/boot/dts/amd/salina-n1-common.dtsi
+ create mode 100644 arch/arm64/boot/dts/amd/salina-n1-flash-parts.dtsi
+ create mode 100644 include/dt-bindings/soc/pensando,capmem.h
+
+diff --git a/arch/arm64/boot/dts/amd/Makefile b/arch/arm64/boot/dts/amd/Makefile
+index 8502cc2afbc5..e125a23fc778 100644
+--- a/arch/arm64/boot/dts/amd/Makefile
++++ b/arch/arm64/boot/dts/amd/Makefile
+@@ -1,3 +1,9 @@
+ # SPDX-License-Identifier: GPL-2.0
+ dtb-$(CONFIG_ARCH_PENSANDO) += elba-asic.dtb
++dtb-$(CONFIG_ARCH_PENSANDO_GIGLIO_SOC) += giglio-asic.dtb
++dtb-$(CONFIG_ARCH_PENSANDO_SALINA_SOC) += salina-asic.dtb \
++					  salina-a35-asic.dtb \
++					  salina-haps-4core.dtb \
++					  salina-haps-16core.dtb \
++					  salina-a35-haps.dtb
+ dtb-$(CONFIG_ARCH_SEATTLE) += amd-overdrive-rev-b0.dtb amd-overdrive-rev-b1.dtb
+diff --git a/arch/arm64/boot/dts/amd/elba-asic-common.dtsi b/arch/arm64/boot/dts/amd/elba-asic-common.dtsi
+index 46b6c6783f58..a3c065a5e7fe 100644
+--- a/arch/arm64/boot/dts/amd/elba-asic-common.dtsi
++++ b/arch/arm64/boot/dts/amd/elba-asic-common.dtsi
+@@ -3,6 +3,8 @@
+  * Copyright 2020-2022 Advanced Micro Devices, Inc.
+  */
+ 
++#include <dt-bindings/reset/amd,pensando-elba-reset.h>
++
+ &ahb_clk {
+ 	clock-frequency = <400000000>;
+ };
+@@ -43,6 +45,12 @@ &gpio0 {
+ &emmc {
+ 	bus-width = <8>;
+ 	cap-mmc-hw-reset;
++	reset-names = "hw";
++	resets = <&rstc EMMC_HW_RESET>;
++	status = "okay";
++};
++
++&edac {
+ 	status = "okay";
+ };
+ 
+@@ -67,4 +75,38 @@ &spi0 {
+ 	cs-gpios = <0>, <0>, <&porta 1 GPIO_ACTIVE_LOW>,
+ 		   <&porta 7 GPIO_ACTIVE_LOW>;
+ 	status = "okay";
++
++	spi@0 {
++		compatible = "amd,pensando-elbasr", "simple-mfd";
++		reg = <0>;
++		#address-cells = <1>;
++		#size-cells = <0>;
++		spi-max-frequency = <12000000>;
++
++		rstc: reset-controller@0 {
++			compatible = "amd,pensando-elbasr-reset";
++			reg = <0>;
++			#reset-cells = <1>;
++		};
++	};
++
++	spi@1 {
++		compatible = "amd,pensando-elbasr", "simple-mfd";
++		reg = <1>;
++		spi-max-frequency = <12000000>;
++	};
++
++	spi@2 {
++		compatible = "amd,pensando-cpld-rd1173";
++		reg = <2>;
++		spi-max-frequency = <12000000>;
++		interrupt-parent = <&porta>;
++		interrupts = <0 IRQ_TYPE_LEVEL_LOW>;
++	};
++
++	spi@3 {
++		compatible = "amd,pensando-elbasr", "simple-mfd";
++		reg = <3>;
++		spi-max-frequency = <12000000>;
++	};
+ };
+diff --git a/arch/arm64/boot/dts/amd/elba-asic-memory.dtsi b/arch/arm64/boot/dts/amd/elba-asic-memory.dtsi
+new file mode 100644
+index 000000000000..ccb07ad10c0c
+--- /dev/null
++++ b/arch/arm64/boot/dts/amd/elba-asic-memory.dtsi
+@@ -0,0 +1,20 @@
++// SPDX-License-Identifier: (GPL-2.0-only or BSD-2-Clause)
++/*
++ * Copyright 2020-2023 Advanced Micro Devices, Inc.
++ */
++
++/ {
++	reserved-memory {
++		#address-cells = <2>;
++		#size-cells = <2>;
++
++		ranges;
++
++		mnet_reserved: mnet_dma_region {
++			compatible = "shared-dma-pool";
++			no-map;
++			size = <0x0 0x6000000>;
++			alignment = <0x0 0x1000>;
++		};
++	};
++};
+diff --git a/arch/arm64/boot/dts/amd/elba-asic.dts b/arch/arm64/boot/dts/amd/elba-asic.dts
+index c3f4da2f7449..f05d4e9a6350 100644
+--- a/arch/arm64/boot/dts/amd/elba-asic.dts
++++ b/arch/arm64/boot/dts/amd/elba-asic.dts
+@@ -11,6 +11,8 @@
+ #include "elba-16core.dtsi"
+ #include "elba-asic-common.dtsi"
+ #include "elba-flash-parts.dtsi"
++#include "elba-asic-memory.dtsi"
++#include "elba-mdev.dtsi"
+ 
+ / {
+ 	model = "AMD Pensando Elba Board";
+diff --git a/arch/arm64/boot/dts/amd/elba-mdev.dtsi b/arch/arm64/boot/dts/amd/elba-mdev.dtsi
+new file mode 100644
+index 000000000000..45a9287d7cda
+--- /dev/null
++++ b/arch/arm64/boot/dts/amd/elba-mdev.dtsi
+@@ -0,0 +1,76 @@
++// SPDX-License-Identifier: (GPL-2.0-only or BSD-2-Clause)
++/*
++ * Copyright 2020-2023 Advanced Micro Devices, Inc.
++ */
++
++/ {
++	dma-coherent;
++
++	mnet0: mnet0 {
++		compatible = "pensando,mnet";
++		msi-parent = <&gic_its 0x0>;
++		memory-region = <&mnet_reserved>;
++	};
++	mnet1: mnet1 {
++		compatible = "pensando,mnet";
++		msi-parent = <&gic_its 0x1>;
++		memory-region = <&mnet_reserved>;
++	};
++	mnet2: mnet2 {
++		compatible = "pensando,mnet";
++		msi-parent = <&gic_its 0x2>;
++		memory-region = <&mnet_reserved>;
++	};
++	mnet3: mnet3 {
++		compatible = "pensando,mnet";
++		msi-parent = <&gic_its 0x3>;
++		memory-region = <&mnet_reserved>;
++	};
++	mnet4: mnet4 {
++		compatible = "pensando,mnet";
++		msi-parent = <&gic_its 0x4>;
++		memory-region = <&mnet_reserved>;
++	};
++	mnet5: mnet5 {
++		compatible = "pensando,mnet";
++		msi-parent = <&gic_its 0x5>;
++		memory-region = <&mnet_reserved>;
++	};
++	mnet6: mnet6 {
++		compatible = "pensando,mnet";
++		msi-parent = <&gic_its 0x6>;
++		memory-region = <&mnet_reserved>;
++	};
++	mnet7: mnet7 {
++		compatible = "pensando,mnet";
++		msi-parent = <&gic_its 0x7>;
++		memory-region = <&mnet_reserved>;
++	};
++	mnet8: mnet8 {
++		compatible = "pensando,mnet";
++		msi-parent = <&gic_its 0x8>;
++		memory-region = <&mnet_reserved>;
++	};
++	mnet9: mnet9 {
++		compatible = "pensando,mnet";
++		msi-parent = <&gic_its 0x9>;
++		memory-region = <&mnet_reserved>;
++	};
++
++	mcrypt0: mcrypt0 {
++		compatible = "pensando,mcrypt";
++		msi-parent = <&gic_its 0xb>;
++	};
++	mcrypt1: mcrypt1 {
++		compatible = "pensando,mcrypt";
++		msi-parent = <&gic_its 0xc>;
++	};
++	mcrypt2: mcrypt2 {
++		compatible = "pensando,mcrypt";
++		msi-parent = <&gic_its 0xd>;
++	};
++	mcrypt3: mcrypt3 {
++		compatible = "pensando,mcrypt";
++		msi-parent = <&gic_its 0xe>;
++	};
++};
+diff --git a/arch/arm64/boot/dts/amd/elba.dtsi b/arch/arm64/boot/dts/amd/elba.dtsi
+index 674890cf2a34..59b82a3c23e1 100644
+--- a/arch/arm64/boot/dts/amd/elba.dtsi
++++ b/arch/arm64/boot/dts/amd/elba.dtsi
+@@ -5,6 +5,7 @@
+ 
+ #include <dt-bindings/gpio/gpio.h>
+ #include "dt-bindings/interrupt-controller/arm-gic.h"
++#include "dt-bindings/soc/pensando,capmem.h"
+ 
+ / {
+ 	model = "Elba ASIC Board";
+@@ -35,6 +36,11 @@ ref_clk: oscillator4 {
+ 		#clock-cells = <0>;
+ 	};
+ 
++	gmac_clk: oscillator5 {
++		compatible = "fixed-clock";
++		#clock-cells = <0>;
++	};
++
+ 	psci {
+ 		compatible = "arm,psci-0.2";
+ 		method = "smc";
+@@ -53,6 +59,24 @@ pmu {
+ 		interrupts = <GIC_PPI 7 IRQ_TYPE_LEVEL_LOW>;
+ 	};
+ 
++	/* Common UIO device for MSI drivers */
++	uio_penmsi {
++		compatible = "pensando,uio_penmsi";
++		name = "uio_penmsi";
++	};
++
++	rstcause {
++		compatible = "pensando,rstcause";
++		pensando,causeregs = <&syscon 0x2084>;
++	};
++
++	capmem {
++		compatible = "pensando,capmem";
++		pensando,capmem-fixed-ranges =
++			<0x0 0x200000 0x0 0x6fe00000 DSC_MEM_ATTR_DEVICE>,
++			<0x4 0x0 0x0 0x400000 DSC_MEM_ATTR_DEVICE>;
++	};
++
+ 	soc: soc {
+ 		compatible = "simple-bus";
+ 		#address-cells = <2>;
+@@ -141,6 +165,14 @@ uart0: serial@4800 {
+ 			reg-io-width = <4>;
+ 		};
+ 
++		/* MSI UIO device 1 */
++		uio_penmsi1@520000 {
++			compatible = "pensando,uio_penmsi1";
++			reg = <0x0 0x520000 0x0 0x10000>;
++			msi-parent = <&gic_its 0xa>;
++			num-interrupts = <16>;  /* # MSI interrupts to get */
++		};
++
+ 		gic: interrupt-controller@800000 {
+ 			compatible = "arm,gic-v3";
+ 			reg = <0x0 0x800000 0x0 0x200000>,	/* GICD */
+@@ -169,6 +201,71 @@ gic_its: msi-controller@820000 {
+ 			};
+ 		};
+ 
++		/*
++		 * Until we  know the interrupt domain following this, we
++		 * are forced to use this is the place where interrupts from
++		 * PCI converge. In the ideal case, we use one domain higher,
++		 * where the PCI-ness has been shed.
++		 */
++		pxc0_intr: interrupt-controller@20102200 {
++			compatible = "pensando,soc-ictlr-csrintr";
++			interrupt-controller;
++			reg = <0x0 0x20102200 0x0 0x4>;
++			#interrupt-cells = <3>;
++			interrupt-parent = <&gic>;
++			interrupts = <GIC_SPI 17 IRQ_TYPE_LEVEL_HIGH>;
++			interrupt-names = "pxc0_intr";
++		};
++
++		/* UIO device using interrupt line PCIEMAC */
++		pciemac@20102200 {
++			#address-cells = <2>;
++			#size-cells = <2>;
++			#interrupt-cells = <3>;
++
++			compatible = "pensando,uio_pciemac";
++			register-type = "csr-interrupt";
++			interrupt-parent = <&pxc0_intr>;
++			interrupts = <GIC_SPI 0 IRQ_TYPE_LEVEL_HIGH>;
++			reg = <0x0 0x20102200 0x0 0x10>; /* pxc0_intr */
++
++			enable_csr_paddr = <0x0 0x20102200 0x0 0x10>;
++			enable_mask = <(1 << 0)>;
++		};
++
++		edac: edac@30500000 {
++			compatible = "pensando,elba-edac-mc";
++			reg = <0x0 0x30500000 0x0 0x100000>;
++			status = "disabled"; /* not available on HAPS */
++		};
++
++		stmmac_axi_setup: stmmac-axi-config {
++			snps,wr_osr_lmt = <0xf>;
++			snps,rd_osr_lmt = <0xf>;
++			snps,blen = <256 128 64 32 0 0 0>;
++		};
++
++		gmac0: ethernet@6f21a000 {
++			compatible = "snps,dwmac-3.70a", "snps,dwmac";
++			reg = <0x0 0x6f21a000 0x0 0x8000>;
++			clocks = <&gmac_clk>;
++			clock-names = "stmmaceth";
++			interrupts = <GIC_SPI 29 IRQ_TYPE_LEVEL_HIGH>;
++			interrupt-names = "macirq";
++			mac-address = [00 00 00 00 00 00];/* Filled in by U-Boot */
++			max-frame-size = <3800>;
++			snps,multicast-filter-bins = <256>;
++			snps,perfect-filter-entries = <128>;
++			rx-fifo-depth = <16384>;
++			tx-fifo-depth = <16384>;
++			snps,axi-config = <&stmmac_axi_setup>;
++			snps,pbl = <2>;
++			fixed-link {
++				speed = <100>;
++				full-duplex;
++			};
++		};
++
+ 		emmc: mmc@30440000 {
+ 			compatible = "amd,pensando-elba-sd4hc", "cdns,sd4hc";
+ 			reg = <0x0 0x30440000 0x0 0x10000>,
+@@ -187,5 +284,59 @@ syscon: syscon@307c0000 {
+ 			compatible = "amd,pensando-elba-syscon", "syscon";
+ 			reg = <0x0 0x307c0000 0x0 0x3000>;
+ 		};
++
++		bsm@307c2080 {
++			compatible = "pensando,bsm";
++			reg = <0x0 0x307c2080 0x0 0x4>;
++		};
++
++		pcie@307c2480 {
++			compatible = "pensando,pcie";
++			reg = <0x0 0x307c2480 0x0 0x4		/* MS CFG_WDT */
++			       0x0 0x1400 0x0 0x10		/* WDT0 */
++			       0x0 0x20000000 0x0 0x380000>;	/* PXB Base */
++		};
++
++		kpcimgr@20000000 {
++			compatible = "pensando,kpcimgr";
++			msi-parent = <&gic_its 0xf>;
++			shmem-index = <3>;
++			hwmem-index = <2>;
++			reg = <0x0 0x20000000 0x0 0x00380000	/* PXB Base */
++			       0x0 0x61800000 0x0 0x00101000	/* Interrupts */
++			       0x0 0xc4000000 0x0 0x01000000	/* HWMEM */
++			       0x0 0x0        0x0 0x02000000>;	/* SHMEM */
++		};
++
++		/*
++		 * panic: panicdump@0 {
++		 *      compatible = "pensando,capri-crash";
++		 *      status = "disabled";
++		 * };
++		 */
++
++		sbus@307c24a8 {
++			compatible = "pensando,sbus";
++			sbus-ring-num = <0>;
++			reg = <0x0 0x307c24a8 0x0 0x8>;		/* SBUS0 REG */
++		};
++
++		sbus@307c24b8 {
++			compatible = "pensando,sbus";
++			sbus-ring-num = <1>;
++			reg = <0x0 0x307c24b8 0x0 0x8>;		/* SBUS1 REG */
++		};
++
++		sbus@307c24c8 {
++			compatible = "pensando,sbus";
++			sbus-ring-num = <2>;
++			reg = <0x0 0x307c24c8 0x0 0x8>;		/* SBUS2 REG */
++		};
++
++		sbus@6f242134 {
++			compatible = "pensando,sbus";
++			sbus-ring-num = <3>;
++			reg = <0x0 0x6f242134 0x0 0x8>;		/* SBUS3 REG */
++		};
+ 	};
+ };
+diff --git a/arch/arm64/boot/dts/amd/giglio-asic-common.dtsi b/arch/arm64/boot/dts/amd/giglio-asic-common.dtsi
+new file mode 100644
+index 000000000000..979b5aff9552
+--- /dev/null
++++ b/arch/arm64/boot/dts/amd/giglio-asic-common.dtsi
+@@ -0,0 +1,141 @@
++// SPDX-License-Identifier: GPL-2.0
++
++#include <dt-bindings/reset/amd,pensando-elba-reset.h>
++
++&ahb_clk {
++	clock-frequency = <400000000>;
++};
++
++&emmc_clk {
++	clock-frequency = <200000000>;
++};
++
++&flash_clk {
++	clock-frequency = <400000000>;
++};
++
++&ref_clk {
++	clock-frequency = <156250000>;
++};
++
++&qspi {
++	status = "okay";
++	flash0: flash@0 {
++		compatible = "jedec,spi-nor";
++		reg = <0>;
++		spi-max-frequency = <40000000>;
++		spi-rx-bus-width = <2>;
++		m25p,fast-read;
++		cdns,read-delay = <0>;
++		cdns,tshsl-ns = <0>;
++		cdns,tsd2d-ns = <0>;
++		cdns,tchsh-ns = <0>;
++		cdns,tslch-ns = <0>;
++	};
++};
++
++&gpio0 {
++	status = "ok";
++};
++
++&gpio1 {
++	status = "ok";
++};
++
++&emmc {
++	bus-width = <8>;
++	cap-mmc-hw-reset;
++	reset-names = "hw";
++	resets = <&rstc EMMC_HW_RESET>;
++	status = "ok";
++};
++
++&edac {
++	status = "okay";
++};
++
++&wdt0 {
++	status = "okay";
++};
++
++&i2c0 {
++	clock-frequency = <100000>;
++	status = "okay";
++};
++
++&i2c1 {
++	clock-frequency = <100000>;
++	status = "okay";
++};
++
++&i2c2 {
++	clock-frequency = <100000>;
++	status = "okay";
++
++	temp-sensor@4c {
++		compatible = "ti,tmp451";
++		reg = <0x4c>;
++	};
++
++	rtc@51 {
++		compatible = "nxp,pcf85263";
++		reg = <0x51>;
++	};
++
++	regulator@62 {
++		compatible = "ti,tps53688";
++		reg = <0x62>;
++	};
++};
++
++&i2c3 {
++	clock-frequency = <100000>;
++	status = "okay";
++
++	/* MCTP slave default 0x64 is 0x32 7-bit address */
++	mctp@32 {
++		compatible = "snps,mctp";
++		reg = <0x40000032>;
++	};
++};
++
++&spi0 {
++	num-cs = <2>;
++	status = "okay";
++	spi@0 {
++		compatible = "amd,pensando-elbasr", "simple-mfd";
++		reg = <0>;
++		#address-cells = <1>;
++		#size-cells = <0>;
++		spi-max-frequency = <12000000>;
++
++		rstc: reset-controller@0 {
++			compatible = "amd,pensando-elbasr-reset";
++			reg = <0>;
++			#reset-cells = <1>;
++		};
++	};
++
++	spi@1 {
++		compatible = "amd,pensando-elbasr", "simple-mfd";
++		reg = <1>;
++		spi-max-frequency = <12000000>;
++	};
++};
++
++&spi1 {
++	status = "okay";
++
++	flash1: flash1@0 {
++		compatible = "jedec,spi-nor";
++		reg = <0>;
++		spi-max-frequency = <20000000>;
++		spi-rx-bus-width = <1>;
++		m25p,fast-read;
++		cdns,read-delay = <0>;
++		cdns,tshsl-ns = <0>;
++		cdns,tsd2d-ns = <0>;
++		cdns,tchsh-ns = <0>;
++		cdns,tslch-ns = <0>;
++	};
++};
+diff --git a/arch/arm64/boot/dts/amd/giglio-asic.dts b/arch/arm64/boot/dts/amd/giglio-asic.dts
+new file mode 100644
+index 000000000000..a32e10e5ce82
+--- /dev/null
++++ b/arch/arm64/boot/dts/amd/giglio-asic.dts
+@@ -0,0 +1,30 @@
++// SPDX-License-Identifier: (GPL-2.0-only or BSD-2-Clause)
++/*
++ * Device Tree file for AMD Pensando Elba Board.
++ *
++ * Copyright 2020-2022 Advanced Micro Devices, Inc.
++ */
++
++/dts-v1/;
++
++#include "giglio.dtsi"
++#include "elba-16core.dtsi"
++#include "giglio-asic-common.dtsi"
++#include "elba-flash-parts.dtsi"
++#include "elba-asic-memory.dtsi"
++#include "elba-mdev.dtsi"
++
++/ {
++	model = "AMD Pensando Giglio Board";
++	compatible = "amd, pensando-giglio-ginestra", "amd,pensando-giglio";
++
++	aliases {
++		serial0 = &uart0;
++		spi0 = &spi0;
++		spi1 = &qspi;
++	};
++
++	chosen {
++		stdout-path = "serial0:115200n8";
++	};
++};
+diff --git a/arch/arm64/boot/dts/amd/giglio.dtsi b/arch/arm64/boot/dts/amd/giglio.dtsi
+new file mode 100644
+index 000000000000..9948519a2853
+--- /dev/null
++++ b/arch/arm64/boot/dts/amd/giglio.dtsi
+@@ -0,0 +1,439 @@
++// SPDX-License-Identifier: GPL-2.0
++/* Copyright (c) 2019-2022, Pensando Systems Inc. */
++
++#include <dt-bindings/gpio/gpio.h>
++#include "dt-bindings/interrupt-controller/arm-gic.h"
++
++/ {
++	interrupt-parent = <&gic>;
++	#address-cells = <2>;
++	#size-cells = <2>;
++
++	dma-coherent;
++
++	ahb_clk: oscillator0 {
++		compatible = "fixed-clock";
++		#clock-cells = <0>;
++	};
++
++	emmc_clk: oscillator2 {
++		compatible = "fixed-clock";
++		#clock-cells = <0>;
++	};
++
++	flash_clk: oscillator3 {
++		compatible = "fixed-clock";
++		#clock-cells = <0>;
++	};
++
++	ref_clk: oscillator4 {
++		compatible = "fixed-clock";
++		#clock-cells = <0>;
++	};
++
++	gmac_clk: oscillator5 {
++		compatible = "fixed-clock";
++		#clock-cells = <0>;
++	};
++
++	timer {
++		compatible = "arm,armv8-timer";
++		interrupts = <GIC_PPI 13 IRQ_TYPE_LEVEL_LOW>,
++			     <GIC_PPI 14 IRQ_TYPE_LEVEL_LOW>,
++			     <GIC_PPI 11 IRQ_TYPE_LEVEL_LOW>,
++			     <GIC_PPI 10 IRQ_TYPE_LEVEL_LOW>;
++	};
++
++	pmu {
++		compatible = "arm,cortex-a72-pmu";
++		interrupts = <GIC_PPI 7 IRQ_TYPE_LEVEL_LOW>;
++	};
++
++	/* Common UIO device for MSI drivers */
++	uio_penmsi {
++		compatible = "pensando,uio_penmsi";
++		name = "uio_penmsi";
++	};
++
++	rstcause {
++		compatible = "pensando,rstcause";
++		pensando,causeregs = <&mssoc 0x2084>;
++	};
++
++	capmem {
++		compatible = "pensando,capmem";
++	};
++
++	soc: soc {
++		compatible = "simple-bus";
++		#address-cells = <2>;
++		#size-cells = <2>;
++		ranges;
++
++		i2c0: i2c@400 {
++			compatible = "snps,designware-i2c";
++			reg = <0x0 0x400 0x0 0x100>;
++			clocks = <&ahb_clk>;
++			#address-cells = <1>;
++			#size-cells = <0>;
++			i2c-sda-hold-time-ns = <480>;
++			snps,sda-timeout-ms = <750>;
++			interrupts = <GIC_SPI 4 IRQ_TYPE_LEVEL_HIGH>;
++			status = "disabled";
++		};
++
++		i2c1: i2c@800 {
++			compatible = "snps,designware-i2c";
++			reg = <0x0 0x800 0x0 0x100>;
++			clocks = <&ahb_clk>;
++			#address-cells = <1>;
++			#size-cells = <0>;
++			i2c-sda-hold-time-ns = <480>;
++			snps,sda-timeout-ms = <750>;
++			interrupts = <GIC_SPI 5 IRQ_TYPE_LEVEL_HIGH>;
++			status = "disabled";
++		};
++
++		i2c2: i2c@c00 {
++			compatible = "snps,designware-i2c";
++			reg = <0x0 0xc00 0x0 0x100>;
++			clocks = <&ahb_clk>;
++			#address-cells = <1>;
++			#size-cells = <0>;
++			i2c-sda-hold-time-ns = <480>;
++			snps,sda-timeout-ms = <750>;
++			interrupts = <GIC_SPI 6 IRQ_TYPE_LEVEL_HIGH>;
++			status = "disabled";
++		};
++
++		i2c3: i2c@1000 {
++			compatible = "snps,designware-i2c";
++			reg = <0x0 0x1000 0x0 0x100>;
++			clocks = <&ahb_clk>;
++			#address-cells = <1>;
++			#size-cells = <0>;
++			i2c-sda-hold-time-ns = <480>;
++			snps,sda-timeout-ms = <750>;
++			interrupts = <GIC_SPI 7 IRQ_TYPE_LEVEL_HIGH>;
++			status = "disabled";
++		};
++
++		wdt0: watchdog@1400 {
++			compatible = "snps,dw-wdt";
++			reg = <0x0 0x1400 0x0 0x100>;
++			clocks = <&ahb_clk>;
++			interrupts = <GIC_SPI 10 IRQ_TYPE_LEVEL_HIGH>;
++			status = "disabled";
++		};
++
++		wdt1: watchdog@1800 {
++			compatible = "snps,dw-wdt";
++			reg = <0x0 0x1800 0x0 0x100>;
++			clocks = <&ahb_clk>;
++			interrupts = <GIC_SPI 11 IRQ_TYPE_LEVEL_HIGH>;
++			status = "disabled";
++		};
++
++		wdt2: watchdog@1c00 {
++			compatible = "snps,dw-wdt";
++			reg = <0x0 0x1c00 0x0 0x100>;
++			clocks = <&ahb_clk>;
++			interrupts = <GIC_SPI 12 IRQ_TYPE_LEVEL_HIGH>;
++			status = "disabled";
++		};
++
++		wdt3: watchdog@2000 {
++			compatible = "snps,dw-wdt";
++			reg = <0x0 0x2000 0x0 0x100>;
++			clocks = <&ahb_clk>;
++			interrupts = <GIC_SPI 13 IRQ_TYPE_LEVEL_HIGH>;
++			status = "disabled";
++		};
++
++		qspi: spi@2400 {
++			compatible = "pensando,elba-qspi";
++			#address-cells = <1>;
++			#size-cells = <0>;
++			reg = <0x0 0x2400 0x0 0x400>,
++			      <0x0 0x7fff0000 0x0 0x1000>;
++			interrupts = <GIC_SPI 0 IRQ_TYPE_LEVEL_HIGH>;
++			clocks = <&flash_clk>;
++			cdns,fifo-depth = <1024>;
++			cdns,fifo-width = <4>;
++			cdns,trigger-address = <0x7fff0000>;
++			status = "disabled";
++		};
++
++		spi0: spi@2800 {
++			compatible = "pensando,elba-spi";
++			reg = <0x0 0x2800 0x0 0x100>;
++			pensando,spics = <&mssoc 0x2468 0>;
++			clocks = <&ahb_clk>;
++			interrupts = <GIC_SPI 9 IRQ_TYPE_LEVEL_HIGH>;
++			#address-cells = <1>;
++			#size-cells = <0>;
++			num-cs = <2>;
++			status = "disabled";
++		};
++
++		spi1: spi@2c00 {
++			compatible = "pensando,elba-spi";
++			reg = <0x0 0x2c00 0x0 0x100>;
++			pensando,spics = <&mssoc 0x2fd8 0>;
++			clocks = <&ahb_clk>;
++			interrupts = <GIC_SPI 8 IRQ_TYPE_LEVEL_HIGH>;
++			#address-cells = <1>;
++			#size-cells = <0>;
++			num-cs = <2>;
++			status = "disabled";
++		};
++
++		gpio0: gpio@4000 {
++			#address-cells = <1>;
++			#size-cells = <0>;
++			compatible = "snps,dw-apb-gpio";
++			reg = <0x0 0x4000 0x0 0x78>;
++			status = "disabled";
++
++			porta: gpio-port@0 {
++				compatible = "snps,dw-apb-gpio-port";
++				reg = <0>;
++				gpio-controller;
++				#gpio-cells = <2>;
++				ngpios = <8>;
++				interrupts = <GIC_SPI 1 IRQ_TYPE_LEVEL_HIGH>;
++				interrupt-controller;
++				interrupt-parent = <&gic>;
++				#interrupt-cells = <2>;
++			};
++
++			portb: gpio-port@1 {
++				compatible = "snps,dw-apb-gpio-port";
++				reg = <1>;
++				gpio-controller;
++				#gpio-cells = <2>;
++				ngpios = <8>;
++			};
++
++			portc: gpio-port@2 {
++				compatible = "snps,dw-apb-gpio-port";
++				reg = <2>;
++				gpio-controller;
++				#gpio-cells = <2>;
++				ngpios = <8>;
++			};
++
++			portd: gpio-port@3 {
++				compatible = "snps,dw-apb-gpio-port";
++				reg = <3>;
++				gpio-controller;
++				#gpio-cells = <2>;
++				ngpios = <8>;
++			};
++		};
++
++		gpio1: gpio@4400 {
++			#address-cells = <1>;
++			#size-cells = <0>;
++			compatible = "snps,dw-apb-gpio";
++			reg = <0x0 0x4400 0x0 0x78>;
++			status = "disabled";
++
++			porta1: gpio-port@0 {
++				compatible = "snps,dw-apb-gpio-port";
++				reg = <0>;
++				gpio-controller;
++				#gpio-cells = <2>;
++				ngpios = <8>;
++				interrupts = <GIC_SPI 32 IRQ_TYPE_LEVEL_HIGH>;
++				interrupt-controller;
++				interrupt-parent = <&gic>;
++				#interrupt-cells = <2>;
++			};
++
++			portb1: gpio-port@1 {
++				compatible = "snps,dw-apb-gpio-port";
++				reg = <1>;
++				gpio-controller;
++				#gpio-cells = <2>;
++				ngpios = <8>;
++			};
++		};
++
++		uart0: serial@4800 {
++			compatible = "ns16550a";
++			reg = <0x0 0x4800 0x0 0x100>;
++			clocks = <&ref_clk>;
++			interrupts = <GIC_SPI 2 IRQ_TYPE_LEVEL_HIGH>;
++			reg-shift = <2>;
++			reg-io-width = <4>;
++		};
++
++		uart1: serial@4c00 {
++			compatible = "ns16550a";
++			reg = <0x0 0x4c00 0x0 0x100>;
++			clocks = <&ref_clk>;
++			interrupts = <GIC_SPI 3 IRQ_TYPE_LEVEL_HIGH>;
++			reg-shift = <2>;
++			reg-io-width = <4>;
++		};
++
++		/* MSI UIO device 1 */
++		uio_penmsi1@520000 {
++			compatible = "pensando,uio_penmsi1";
++			reg = <0x0 0x520000 0x0 0x10000>;
++			msi-parent = <&gic_its 0xa>;
++			num-interrupts = <16>;  /* # MSI interrupts to get */
++		};
++
++		gic: interrupt-controller@800000 {
++			compatible = "arm,gic-v3";
++			#interrupt-cells = <3>;
++			#address-cells = <2>;
++			#size-cells = <2>;
++			ranges;
++			interrupt-controller;
++			reg = <0x0 0x800000 0x0 0x200000>,	/* GICD */
++			      <0x0 0xa00000 0x0 0x200000>;	/* GICR */
++			interrupts = <GIC_PPI 9 IRQ_TYPE_LEVEL_HIGH>;
++
++			gic_its: interrupt-controller@820000 {
++				compatible = "arm,gic-v3-its";
++				msi-controller;
++				#msi-cells = <1>;
++				reg = <0x0 0x820000 0x0 0x10000>;
++				socionext,synquacer-pre-its =
++							<0xc00000 0x1000000>;
++			};
++		};
++
++		/*
++		 * Until we  know the interrupt domain following this, we
++		 * are forced to use this is the place where interrupts from
++		 * PCI converge. In the ideal case, we use one domain higher,
++		 * where the PCI-ness has been shed.
++		 */
++		pxc0_intr: interrupt-controller@20102200 {
++			compatible = "pensando,soc-ictlr-csrintr";
++			interrupt-controller;
++			reg = <0x0 0x20102200 0x0 0x4>;
++			#interrupt-cells = <3>;
++			interrupt-parent = <&gic>;
++			interrupts = <GIC_SPI 17 IRQ_TYPE_LEVEL_HIGH>;
++			interrupt-names = "pxc0_intr";
++		};
++
++		/* UIO device using interrupt line PCIEMAC */
++		pciemac@20102200 {
++			#address-cells = <2>;
++			#size-cells = <2>;
++			#interrupt-cells = <3>;
++
++			compatible = "pensando,uio_pciemac";
++			register-type = "csr-interrupt";
++			interrupt-parent = <&pxc0_intr>;
++			interrupts = <GIC_SPI 0 IRQ_TYPE_LEVEL_HIGH>;
++			reg = <0x0 0x20102200 0x0 0x10>; /* pxc0_intr */
++
++			enable_csr_paddr = <0x0 0x20102200 0x0 0x10>;
++			enable_mask = <(1 << 0)>;
++		};
++
++		edac: edac@30500000 {
++			compatible = "pensando,giglio-edac-mc";
++			reg = <0x0 0x30500000 0x0 0x100000>;
++			status = "disabled"; /* not available on HAPS */
++		};
++
++		stmmac_axi_setup: stmmac-axi-config {
++			snps,wr_osr_lmt = <0xf>;
++			snps,rd_osr_lmt = <0xf>;
++			snps,blen = <256 128 64 32 0 0 0>;
++		};
++
++		gmac0: ethernet@6f21a000 {
++			compatible = "snps,dwmac-3.70a", "snps,dwmac";
++			reg = <0x0 0x6f21a000 0x0 0x8000>;
++			clocks = <&gmac_clk>;
++			clock-names = "stmmaceth";
++			interrupts = <GIC_SPI 29 IRQ_TYPE_LEVEL_HIGH>;
++			interrupt-names = "macirq";
++			mac-address = [00 00 00 00 00 00];/* Filled in by U-Boot */
++			max-frame-size = <3800>;
++			snps,multicast-filter-bins = <256>;
++			snps,perfect-filter-entries = <128>;
++			rx-fifo-depth = <16384>;
++			tx-fifo-depth = <16384>;
++			snps,axi-config = <&stmmac_axi_setup>;
++			snps,pbl = <2>;
++			fixed-link {
++				speed = <100>;
++				full-duplex;
++			};
++		};
++
++		emmc: mmc@30440000 {
++			compatible = "pensando,elba-emmc", "cdns,sd4hc";
++			clocks = <&emmc_clk>;
++			interrupts = <GIC_SPI 16 IRQ_TYPE_LEVEL_HIGH>;
++			reg = <0x0 0x30440000 0x0 0x10000
++			       0x0 0x30480044 0x0 0x4>;
++			cdns,phy-input-delay-sd-highspeed = <0x4>;
++			cdns,phy-input-delay-legacy = <0x4>;
++			cdns,phy-input-delay-sd-uhs-sdr50 = <0x6>;
++			cdns,phy-input-delay-sd-uhs-ddr50 = <0x16>;
++			cdns,phy-dll-delay-sdclk = <0>;
++			cdns,phy-dll-delay-sdclk-hsmmc = <0>;
++			cdns,mmc-ddr-1_8v;
++			status = "disabled";
++		};
++
++		mssoc: mssoc@307c0000 {
++			compatible = "pensando,mssoc", "syscon";
++			reg = <0x0 0x307c0000 0x0 0x3000>;
++		};
++
++		bsm@307c2080 {
++			compatible = "pensando,bsm";
++			reg = <0x0 0x307c2080 0x0 0x4>;
++		};
++
++		pcie@307c2480 {
++			compatible = "pensando,pcie";
++			reg = <0x0 0x307c2480 0x0 0x4		/* MS CFG_WDT */
++			       0x0 0x1400 0x0 0x10		/* WDT0 */
++			       0x0 0x20000000 0x0 0x380000>;	/* PXB Base */
++		};
++
++		/*
++		 * panic: panicdump@0 {
++		 *	compatible = "pensando,capri-crash";
++		 *	status = "disabled";
++		 * };
++		 */
++
++		sbus@307c24a8 {
++			compatible = "pensando,sbus";
++			sbus-ring-num = <0>;
++			reg = <0x0 0x307c24a8 0x0 0x8>;		/* SBUS0 REG */
++		};
++
++		sbus@307c24b8 {
++			compatible = "pensando,sbus";
++			sbus-ring-num = <1>;
++			reg = <0x0 0x307c24b8 0x0 0x8>;		/* SBUS1 REG */
++		};
++
++		sbus@307c24c8 {
++			compatible = "pensando,sbus";
++			sbus-ring-num = <2>;
++			reg = <0x0 0x307c24c8 0x0 0x8>;		/* SBUS2 REG */
++		};
++
++		sbus@6f242134 {
++			compatible = "pensando,sbus";
++			sbus-ring-num = <3>;
++			reg = <0x0 0x6f242134 0x0 0x8>;		/* SBUS3 REG */
++		};
++	};
++};
+diff --git a/arch/arm64/boot/dts/amd/salina-16core-spin-table.dtsi b/arch/arm64/boot/dts/amd/salina-16core-spin-table.dtsi
+new file mode 100644
+index 000000000000..faa80d8bab98
+--- /dev/null
++++ b/arch/arm64/boot/dts/amd/salina-16core-spin-table.dtsi
+@@ -0,0 +1,166 @@
++// SPDX-License-Identifier: (GPL-2.0-only or BSD-2-Clause)
++/*
++ * Copyright 2023-2024 Advanced Micro Devices, Inc.
++ */
++
++/ {
++	cpus {
++		#address-cells = <2>;
++		#size-cells = <0>;
++
++		cpu-map {
++			cluster0 {
++				core0 { cpu = <&cpu0>; };
++				core1 { cpu = <&cpu1>; };
++			};
++			cluster1 {
++				core0 { cpu = <&cpu2>; };
++				core1 { cpu = <&cpu3>; };
++			};
++			cluster2 {
++				core0 { cpu = <&cpu4>; };
++				core1 { cpu = <&cpu5>; };
++			};
++			cluster3 {
++				core0 { cpu = <&cpu6>; };
++				core1 { cpu = <&cpu7>; };
++			};
++			cluster4 {
++				core0 { cpu = <&cpu8>; };
++				core1 { cpu = <&cpu9>; };
++			};
++			cluster5 {
++				core0 { cpu = <&cpu10>; };
++				core1 { cpu = <&cpu11>; };
++			};
++			cluster6 {
++				core0 { cpu = <&cpu12>; };
++				core1 { cpu = <&cpu13>; };
++			};
++			cluster7 {
++				core0 { cpu = <&cpu14>; };
++				core1 { cpu = <&cpu15>; };
++			};
++		};
++
++		/* CLUSTER 0 */
++		cpu0: cpu@0 {
++			device_type = "cpu";
++			compatible = "arm,neoverse-n1";
++			reg = <0 0>;
++			enable-method = "spin-table";
++		};
++
++		cpu1: cpu@10000 {
++			device_type = "cpu";
++			compatible = "arm,neoverse-n1";
++			reg = <0 0x10000>;
++			enable-method = "spin-table";
++		};
++
++		/* CLUSTER 1 */
++		cpu2: cpu@20000 {
++			device_type = "cpu";
++			compatible = "arm,neoverse-n1";
++			reg = <0 0x20000>;
++			enable-method = "spin-table";
++		};
++
++		cpu3: cpu@30000 {
++			device_type = "cpu";
++			compatible = "arm,neoverse-n1";
++			reg = <0 0x30000>;
++			enable-method = "spin-table";
++		};
++
++		/* CLUSTER 2 */
++		cpu4: cpu@40000 {
++			device_type = "cpu";
++			compatible = "arm,neoverse-n1";
++			reg = <0 0x40000>;
++			enable-method = "spin-table";
++		};
++
++		cpu5: cpu@50000 {
++			device_type = "cpu";
++			compatible = "arm,neoverse-n1";
++			reg = <0 0x50000>;
++			enable-method = "spin-table";
++		};
++
++		/* CLUSTER 3 */
++		cpu6: cpu@60000 {
++			device_type = "cpu";
++			compatible = "arm,neoverse-n1";
++			reg = <0 0x60000>;
++			enable-method = "spin-table";
++		};
++
++		cpu7: cpu@70000 {
++			device_type = "cpu";
++			compatible = "arm,neoverse-n1";
++			reg = <0 0x70000>;
++			enable-method = "spin-table";
++		};
++
++		/* CLUSTER 4 */
++		cpu8: cpu@80000 {
++			device_type = "cpu";
++			compatible = "arm,neoverse-n1";
++			reg = <0 0x80000>;
++			enable-method = "spin-table";
++		};
++
++		cpu9: cpu@90000 {
++			device_type = "cpu";
++			compatible = "arm,neoverse-n1";
++			reg = <0 0x90000>;
++			enable-method = "spin-table";
++		};
++
++		/* CLUSTER 5 */
++		cpu10: cpu@a0000 {
++			device_type = "cpu";
++			compatible = "arm,neoverse-n1";
++			reg = <0 0xa0000>;
++			enable-method = "spin-table";
++		};
++
++		cpu11: cpu@b0000 {
++			device_type = "cpu";
++			compatible = "arm,neoverse-n1";
++			reg = <0 0xb0000>;
++			enable-method = "spin-table";
++		};
++
++		/* CLUSTER 6 */
++		cpu12: cpu@c0000 {
++			device_type = "cpu";
++			compatible = "arm,neoverse-n1";
++			reg = <0 0xc0000>;
++			enable-method = "spin-table";
++		};
++
++		cpu13: cpu@d0000 {
++			device_type = "cpu";
++			compatible = "arm,neoverse-n1";
++			reg = <0 0xd0000>;
++			enable-method = "spin-table";
++		};
++
++		/* CLUSTER 7 */
++		cpu14: cpu@e0000 {
++			device_type = "cpu";
++			compatible = "arm,neoverse-n1";
++			reg = <0 0xe0000>;
++			enable-method = "spin-table";
++		};
++
++		cpu15: cpu@f0000 {
++			device_type = "cpu";
++			compatible = "arm,neoverse-n1";
++			reg = <0 0xf0000>;
++			enable-method = "spin-table";
++		};
++	};
++};
+diff --git a/arch/arm64/boot/dts/amd/salina-16core.dtsi b/arch/arm64/boot/dts/amd/salina-16core.dtsi
+new file mode 100644
+index 000000000000..faa80d8bab98
+--- /dev/null
++++ b/arch/arm64/boot/dts/amd/salina-16core.dtsi
+@@ -0,0 +1,166 @@
++// SPDX-License-Identifier: (GPL-2.0-only or BSD-2-Clause)
++/*
++ * Copyright 2023-2024 Advanced Micro Devices, Inc.
++ */
++
++/ {
++	cpus {
++		#address-cells = <2>;
++		#size-cells = <0>;
++
++		cpu-map {
++			cluster0 {
++				core0 { cpu = <&cpu0>; };
++				core1 { cpu = <&cpu1>; };
++			};
++			cluster1 {
++				core0 { cpu = <&cpu2>; };
++				core1 { cpu = <&cpu3>; };
++			};
++			cluster2 {
++				core0 { cpu = <&cpu4>; };
++				core1 { cpu = <&cpu5>; };
++			};
++			cluster3 {
++				core0 { cpu = <&cpu6>; };
++				core1 { cpu = <&cpu7>; };
++			};
++			cluster4 {
++				core0 { cpu = <&cpu8>; };
++				core1 { cpu = <&cpu9>; };
++			};
++			cluster5 {
++				core0 { cpu = <&cpu10>; };
++				core1 { cpu = <&cpu11>; };
++			};
++			cluster6 {
++				core0 { cpu = <&cpu12>; };
++				core1 { cpu = <&cpu13>; };
++			};
++			cluster7 {
++				core0 { cpu = <&cpu14>; };
++				core1 { cpu = <&cpu15>; };
++			};
++		};
++
++		/* CLUSTER 0 */
++		cpu0: cpu@0 {
++			device_type = "cpu";
++			compatible = "arm,neoverse-n1";
++			reg = <0 0>;
++			enable-method = "spin-table";
++		};
++
++		cpu1: cpu@10000 {
++			device_type = "cpu";
++			compatible = "arm,neoverse-n1";
++			reg = <0 0x10000>;
++			enable-method = "spin-table";
++		};
++
++		/* CLUSTER 1 */
++		cpu2: cpu@20000 {
++			device_type = "cpu";
++			compatible = "arm,neoverse-n1";
++			reg = <0 0x20000>;
++			enable-method = "spin-table";
++		};
++
++		cpu3: cpu@30000 {
++			device_type = "cpu";
++			compatible = "arm,neoverse-n1";
++			reg = <0 0x30000>;
++			enable-method = "spin-table";
++		};
++
++		/* CLUSTER 2 */
++		cpu4: cpu@40000 {
++			device_type = "cpu";
++			compatible = "arm,neoverse-n1";
++			reg = <0 0x40000>;
++			enable-method = "spin-table";
++		};
++
++		cpu5: cpu@50000 {
++			device_type = "cpu";
++			compatible = "arm,neoverse-n1";
++			reg = <0 0x50000>;
++			enable-method = "spin-table";
++		};
++
++		/* CLUSTER 3 */
++		cpu6: cpu@60000 {
++			device_type = "cpu";
++			compatible = "arm,neoverse-n1";
++			reg = <0 0x60000>;
++			enable-method = "spin-table";
++		};
++
++		cpu7: cpu@70000 {
++			device_type = "cpu";
++			compatible = "arm,neoverse-n1";
++			reg = <0 0x70000>;
++			enable-method = "spin-table";
++		};
++
++		/* CLUSTER 4 */
++		cpu8: cpu@80000 {
++			device_type = "cpu";
++			compatible = "arm,neoverse-n1";
++			reg = <0 0x80000>;
++			enable-method = "spin-table";
++		};
++
++		cpu9: cpu@90000 {
++			device_type = "cpu";
++			compatible = "arm,neoverse-n1";
++			reg = <0 0x90000>;
++			enable-method = "spin-table";
++		};
++
++		/* CLUSTER 5 */
++		cpu10: cpu@a0000 {
++			device_type = "cpu";
++			compatible = "arm,neoverse-n1";
++			reg = <0 0xa0000>;
++			enable-method = "spin-table";
++		};
++
++		cpu11: cpu@b0000 {
++			device_type = "cpu";
++			compatible = "arm,neoverse-n1";
++			reg = <0 0xb0000>;
++			enable-method = "spin-table";
++		};
++
++		/* CLUSTER 6 */
++		cpu12: cpu@c0000 {
++			device_type = "cpu";
++			compatible = "arm,neoverse-n1";
++			reg = <0 0xc0000>;
++			enable-method = "spin-table";
++		};
++
++		cpu13: cpu@d0000 {
++			device_type = "cpu";
++			compatible = "arm,neoverse-n1";
++			reg = <0 0xd0000>;
++			enable-method = "spin-table";
++		};
++
++		/* CLUSTER 7 */
++		cpu14: cpu@e0000 {
++			device_type = "cpu";
++			compatible = "arm,neoverse-n1";
++			reg = <0 0xe0000>;
++			enable-method = "spin-table";
++		};
++
++		cpu15: cpu@f0000 {
++			device_type = "cpu";
++			compatible = "arm,neoverse-n1";
++			reg = <0 0xf0000>;
++			enable-method = "spin-table";
++		};
++	};
++};
+diff --git a/arch/arm64/boot/dts/amd/salina-4core-spin-table.dtsi b/arch/arm64/boot/dts/amd/salina-4core-spin-table.dtsi
+new file mode 100644
+index 000000000000..56af27a303ab
+--- /dev/null
++++ b/arch/arm64/boot/dts/amd/salina-4core-spin-table.dtsi
+@@ -0,0 +1,58 @@
++// SPDX-License-Identifier: (GPL-2.0-only or BSD-2-Clause)
++/*
++ * Copyright 2023-2024 Advanced Micro Devices, Inc.
++ */
++
++/ {
++	cpus {
++		#address-cells = <2>;
++		#size-cells = <0>;
++
++		cpu-map {
++			cluster0 {
++				core0 { cpu = <&cpu0>; };
++			};
++			cluster1 {
++				core0 { cpu = <&cpu2>; };
++			};
++			cluster2 {
++				core0 { cpu = <&cpu4>; };
++			};
++			cluster3 {
++				core0 { cpu = <&cpu6>; };
++			};
++		};
++
++		/* CLUSTER 0 */
++		cpu0: cpu@0 {
++			device_type = "cpu";
++			compatible = "arm,neoverse-n1";
++			reg = <0 0x0>;
++			enable-method = "spin-table";
++		};
++
++		/* CLUSTER 1 */
++		cpu2: cpu@20000 {
++			device_type = "cpu";
++			compatible = "arm,neoverse-n1";
++			reg = <0 0x20000>;
++			enable-method = "spin-table";
++		};
++
++		/* CLUSTER 2 */
++		cpu4: cpu@40000 {
++			device_type = "cpu";
++			compatible = "arm,neoverse-n1";
++			reg = <0 0x40000>;
++			enable-method = "spin-table";
++		};
++
++		/* CLUSTER 3 */
++		cpu6: cpu@60000 {
++			device_type = "cpu";
++			compatible = "arm,neoverse-n1";
++			reg = <0 0x60000>;
++			enable-method = "spin-table";
++		};
++	};
++};
+diff --git a/arch/arm64/boot/dts/amd/salina-a35-asic.dts b/arch/arm64/boot/dts/amd/salina-a35-asic.dts
+new file mode 100644
+index 000000000000..4afda66aebb0
+--- /dev/null
++++ b/arch/arm64/boot/dts/amd/salina-a35-asic.dts
+@@ -0,0 +1,92 @@
++// SPDX-License-Identifier: (GPL-2.0-only or BSD-2-Clause)
++/*
++ * Device Tree file for AMD Pensando Salina Board.
++ *
++ * Copyright 2023-2024 Advanced Micro Devices, Inc.
++ */
++
++/dts-v1/;
++
++#include "salina-a35.dtsi"
++#include "salina-a35-common.dtsi"
++#include "elba-flash-parts.dtsi"
++
++/ {
++	model = "Salina ASIC Board";
++	compatible = "pensando,salina-a35";
++
++	aliases {
++		serial0 = &uart0;
++		spi0 = &spi0;
++		spi1 = &spi1;
++	};
++
++	chosen {
++		stdout-path = "serial0:9600n8";
++	};
++};
++
++&emmc_clk {
++	clock-frequency = <208000000>;
++};
++
++&emmc {
++	bus-width = <4>;
++	status = "ok";
++};
++
++&i2c0 {
++	clock-frequency = <100000>;
++	status = "okay";
++
++	temp-sensor@1f {
++		compatible = "ti,tmp421";
++		reg = <0x1f>;
++	};
++};
++
++&i2c1 {
++	clock-frequency = <100000>;
++	status = "okay";
++
++	at24c02@51 {
++		compatible = "atmel,spd";
++		reg = <0x51>;
++	};
++};
++
++&i2c2 {
++	clock-frequency = <100000>;
++	status = "okay";
++
++	pca9551@60{
++		compatible = "nxp,pca9551";
++		reg = <0x60>;
++	};
++};
++
++&i2c3 {
++	clock-frequency = <100000>;
++	status = "okay";
++
++	at24c02@50 {
++		compatible = "atmel,spd";
++		reg = <0x50>;
++	};
++};
++
++&wdt0 {
++	status = "okay";
++};
++
++&wdt1 {
++	status = "okay";
++};
++
++&wdt2 {
++	status = "okay";
++};
++
++&wdt3 {
++	status = "okay";
++};
+diff --git a/arch/arm64/boot/dts/amd/salina-a35-common.dtsi b/arch/arm64/boot/dts/amd/salina-a35-common.dtsi
+new file mode 100644
+index 000000000000..f1b50e1efe07
+--- /dev/null
++++ b/arch/arm64/boot/dts/amd/salina-a35-common.dtsi
+@@ -0,0 +1,45 @@
++// SPDX-License-Identifier: (GPL-2.0-only or BSD-2-Clause)
++/*
++ * Copyright 2023-2024 Advanced Micro Devices, Inc.
++ */
++
++&ahb_clk {
++	clock-frequency = <400000000>;
++};
++
++&emmc_clk {
++	clock-frequency = <200000000>;
++};
++
++&flash_clk {
++	clock-frequency = <240000000>;
++};
++
++&ref_clk {
++	clock-frequency = <100000000>;
++};
++
++&gpio0 {
++	status = "ok";
++};
++
++&gpio1 {
++	status = "ok";
++};
++
++&spi1 {
++	status = "okay";
++
++	flash0: cysnor@0 {
++		compatible = "jedec,spi-nor";
++		reg = <0>;
++		spi-max-frequency = <50000>;
++		spi-rx-bus-width = <1>;
++		m25p,fast-read;
++		cdns,read-delay = <0>;
++		cdns,tshsl-ns = <0>;
++		cdns,tsd2d-ns = <0>;
++		cdns,tchsh-ns = <0>;
++		cdns,tslch-ns = <0>;
++		};
++};
+diff --git a/arch/arm64/boot/dts/amd/salina-a35-haps.dts b/arch/arm64/boot/dts/amd/salina-a35-haps.dts
+new file mode 100644
+index 000000000000..81b4ba1c2ded
+--- /dev/null
++++ b/arch/arm64/boot/dts/amd/salina-a35-haps.dts
+@@ -0,0 +1,91 @@
++// SPDX-License-Identifier: (GPL-2.0-only or BSD-2-Clause)
++/*
++ * Copyright 2023-2024 Advanced Micro Devices, Inc.
++ */
++
++/dts-v1/;
++
++#include "salina-a35.dtsi"
++#include "salina-haps-common.dtsi"
++#include "elba-flash-parts.dtsi"
++
++/ {
++	model = "Salina A35 HAPS Emulation Board";
++	compatible = "pensando,salina-a35";
++
++	aliases {
++		serial0 = &uart0;
++		spi0 = &spi0;
++		spi1 = &spi1;
++		spi2 = &qspi;
++	};
++
++	chosen {
++		stdout-path = "serial0:9600n8";
++	};
++};
++
++&emmc_clk {
++	clock-frequency = <208000000>;
++};
++
++&emmc {
++	bus-width = <4>;
++	status = "ok";
++};
++
++&i2c0 {
++	clock-frequency = <100000>;
++	status = "okay";
++
++	temp-sensor@1f {
++		compatible = "ti,tmp421";
++		reg = <0x1f>;
++	};
++};
++
++&i2c1 {
++	clock-frequency = <100000>;
++	status = "okay";
++
++	at24c02@51 {
++		compatible = "atmel,spd";
++		reg = <0x51>;
++	};
++};
++
++&i2c2 {
++	clock-frequency = <100000>;
++	status = "okay";
++
++	pca9551@60{
++		compatible = "nxp,pca9551";
++		reg = <0x60>;
++	};
++};
++
++&i2c3 {
++	clock-frequency = <100000>;
++	status = "okay";
++
++	at24c02@50 {
++		compatible = "atmel,spd";
++		reg = <0x50>;
++	};
++};
++
++&wdt0 {
++	status = "okay";
++};
++
++&wdt1 {
++	status = "okay";
++};
++
++&wdt2 {
++	status = "okay";
++};
++
++&wdt3 {
++	status = "okay";
++};
+diff --git a/arch/arm64/boot/dts/amd/salina-a35.dtsi b/arch/arm64/boot/dts/amd/salina-a35.dtsi
+new file mode 100644
+index 000000000000..a6d2315c8d2a
+--- /dev/null
++++ b/arch/arm64/boot/dts/amd/salina-a35.dtsi
+@@ -0,0 +1,298 @@
++// SPDX-License-Identifier: (GPL-2.0-only or BSD-2-Clause)
++/*
++ * Copyright 2023-2024 Advanced Micro Devices, Inc.
++ */
++
++#include <dt-bindings/gpio/gpio.h>
++#include "dt-bindings/interrupt-controller/arm-gic.h"
++#include "dt-bindings/interrupt-controller/irq.h"
++
++/ {
++	interrupt-parent = <&gic>;
++	#address-cells = <2>;
++	#size-cells = <2>;
++
++	cpus {
++		#address-cells = <2>;
++		#size-cells = <0>;
++
++		cpu0: cpu@0 {
++			device_type = "cpu";
++			compatible = "arm,cortex-a35";
++			reg = <0 0x0>;
++		};
++	};
++
++	ahb_clk: oscillator0 {
++		compatible = "fixed-clock";
++		#clock-cells = <0>;
++	};
++
++	emmc_clk: oscillator2 {
++		compatible = "fixed-clock";
++		#clock-cells = <0>;
++	};
++
++	flash_clk: oscillator3 {
++		compatible = "fixed-clock";
++		#clock-cells = <0>;
++	};
++
++	ref_clk: oscillator4 {
++		compatible = "fixed-clock";
++		#clock-cells = <0>;
++	};
++
++	gmac_clk: oscillator5 {
++		compatible = "fixed-clock";
++		#clock-cells = <0>;
++	};
++
++	timer {
++		compatible = "arm,armv8-timer";
++		interrupts = <GIC_PPI 13 IRQ_TYPE_LEVEL_LOW>,
++			     <GIC_PPI 14 IRQ_TYPE_LEVEL_LOW>,
++			     <GIC_PPI 11 IRQ_TYPE_LEVEL_LOW>,
++			     <GIC_PPI 10 IRQ_TYPE_LEVEL_LOW>;
++	};
++
++	/* Common UIO device for MSI drivers */
++	uio_penmsi {
++		compatible = "pensando,uio_penmsi";
++		name = "uio_penmsi";
++	};
++
++	rstcause {
++		compatible = "pensando,rstcause";
++		pensando,causeregs = <&mssoc 0x204>;
++	};
++
++	capmem {
++		compatible = "pensando,capmem";
++	};
++
++	soc: soc {
++		compatible = "simple-bus";
++		#address-cells = <2>;
++		#size-cells = <2>;
++		ranges;
++
++		i2c0: i2c@10000 {
++			compatible = "snps,designware-i2c";
++			reg = <0x0 0x10000 0x0 0x100>;
++			clocks = <&ahb_clk>;
++			#address-cells = <1>;
++			#size-cells = <0>;
++			i2c-sda-hold-time-ns = <480>;
++			snps,sda-timeout-ms = <750>;
++			interrupts = <GIC_SPI 7 IRQ_TYPE_LEVEL_HIGH>;
++			status = "disabled";
++		};
++
++		i2c1: i2c@20000 {
++			compatible = "snps,designware-i2c";
++			reg = <0x0 0x20000 0x0 0x100>;
++			clocks = <&ahb_clk>;
++			#address-cells = <1>;
++			#size-cells = <0>;
++			i2c-sda-hold-time-ns = <480>;
++			snps,sda-timeout-ms = <750>;
++			interrupts = <GIC_SPI 8 IRQ_TYPE_LEVEL_HIGH>;
++			status = "disabled";
++		};
++
++		i2c2: i2c@30000 {
++			compatible = "snps,designware-i2c";
++			reg = <0x0 0x30000 0x0 0x100>;
++			clocks = <&ahb_clk>;
++			#address-cells = <1>;
++			#size-cells = <0>;
++			i2c-sda-hold-time-ns = <480>;
++			snps,sda-timeout-ms = <750>;
++			interrupts = <GIC_SPI 9 IRQ_TYPE_LEVEL_HIGH>;
++			status = "disabled";
++		};
++
++		i2c3: i2c@40000 {
++			compatible = "snps,designware-i2c";
++			reg = <0x0 0x40000 0x0 0x100>;
++			clocks = <&ahb_clk>;
++			#address-cells = <1>;
++			#size-cells = <0>;
++			i2c-sda-hold-time-ns = <480>;
++			snps,sda-timeout-ms = <750>;
++			interrupts = <GIC_SPI 10 IRQ_TYPE_LEVEL_HIGH>;
++			status = "disabled";
++		};
++
++		wdt0: watchdog@50000 {
++			compatible = "snps,dw-wdt";
++			reg = <0x0 0x50000 0x0 0x100>;
++			clocks = <&ahb_clk>;
++			interrupts = <GIC_SPI 13 IRQ_TYPE_LEVEL_HIGH>;
++			status = "disabled";
++		};
++
++		wdt1: watchdog@60000 {
++			compatible = "snps,dw-wdt";
++			reg = <0x0 0x60000 0x0 0x100>;
++			clocks = <&ahb_clk>;
++			interrupts = <GIC_SPI 14 IRQ_TYPE_LEVEL_HIGH>;
++			status = "disabled";
++		};
++
++		wdt2: watchdog@70000 {
++			compatible = "snps,dw-wdt";
++			reg = <0x0 0x70000 0x0 0x100>;
++			clocks = <&ahb_clk>;
++			interrupts = <GIC_SPI 15 IRQ_TYPE_LEVEL_HIGH>;
++			status = "disabled";
++		};
++
++		wdt3: watchdog@80000 {
++			compatible = "snps,dw-wdt";
++			reg = <0x0 0x80000 0x0 0x100>;
++			clocks = <&ahb_clk>;
++			interrupts = <GIC_SPI 16 IRQ_TYPE_LEVEL_HIGH>;
++			status = "disabled";
++		};
++
++		qspi: spi@a0000 {
++			compatible = "pensando,elba-qspi";
++			#address-cells = <1>;
++			#size-cells = <0>;
++			reg = <0x0 0xa0000 0x0 0x400>,
++			      <0x0 0x7fff0000 0x0 0x1000>;
++			interrupts = <GIC_SPI 1 IRQ_TYPE_LEVEL_HIGH>;
++			clocks = <&flash_clk>;
++			cdns,fifo-depth = <1024>;
++			cdns,fifo-width = <4>;
++			cdns,trigger-address = <0x07ff0000>;
++			status = "disabled";
++		};
++
++		spi0: spi@b0000 {
++			compatible = "pensando,elba-spi";
++			reg = <0x0 0xb0000 0x0 0x100>;
++			pensando,spics = <&mssoc 0x668 0>;
++			clocks = <&ahb_clk>;
++			interrupts = <GIC_SPI 12 IRQ_TYPE_LEVEL_HIGH>;
++			#address-cells = <1>;
++			#size-cells = <0>;
++			num-cs = <2>;
++			status = "disabled";
++		};
++
++		spi1: spi@c0000 {
++			compatible = "pensando,elba-spi";
++			reg = <0x0 0xc0000 0x0 0x100>;
++			pensando,spics = <&mssoc 0x66c 0>;
++			clocks = <&ahb_clk>;
++			interrupts = <GIC_SPI 11 IRQ_TYPE_LEVEL_HIGH>;
++			#address-cells = <1>;
++			#size-cells = <0>;
++			num-cs = <2>;
++			status = "disabled";
++		};
++
++		gpio0: gpio@d0000 {
++			#address-cells = <1>;
++			#size-cells = <0>;
++			compatible = "snps,dw-apb-gpio";
++			reg = <0x0 0xd0000 0x0 0x78>;
++			status = "disabled";
++
++			porta: gpio-controller@0 {
++				compatible = "snps,dw-apb-gpio-port";
++				reg = <0>;
++				gpio-controller;
++				#gpio-cells = <2>;
++				ngpios = <8>;
++				interrupts = <GIC_SPI 2 IRQ_TYPE_LEVEL_HIGH>;
++				interrupt-controller;
++				interrupt-parent = <&gic>;
++				#interrupt-cells = <2>;
++			};
++			portb: gpio-controller@1 {
++				compatible = "snps,dw-apb-gpio-port";
++				reg = <1>;
++				gpio-controller;
++				#gpio-cells = <2>;
++				ngpios = <8>;
++			};
++		};
++
++		gpio1: gpio@e0000 {
++			#address-cells = <1>;
++			#size-cells = <0>;
++			compatible = "snps,dw-apb-gpio";
++			reg = <0x0 0xe0000 0x0 0x78>;
++			status = "disabled";
++		};
++
++		uart0: serial@100000 {
++			device_type = "serial";
++			compatible = "ns16550a";
++			reg = <0x0 0x100000 0x0 0x100>;
++			clocks = <&ref_clk>;
++			interrupts = <GIC_SPI 5 IRQ_TYPE_LEVEL_HIGH>;
++			reg-shift = <2>;
++			reg-io-width = <4>;
++		};
++
++		uart2: serial@110000 {
++			device_type = "serial";
++			compatible = "ns16550a";
++			reg = <0x0 0x110000 0x0 0x100>;
++			clocks = <&ref_clk>;
++			interrupts = <GIC_SPI 6 IRQ_TYPE_LEVEL_HIGH>;
++			reg-shift = <2>;
++			reg-io-width = <4>;
++		};
++
++		emmc: sdio-host-chip@610000 {
++			compatible = "cdns,sd4hc";
++			clocks = <&emmc_clk>;
++			interrupts = <GIC_SPI 54 IRQ_TYPE_LEVEL_HIGH>;
++			reg = <0x0 0x610000 0x0 0x10000
++			       0x0 0x690044 0x0 0x4>;
++			cdns,phy-input-delay-sd-highspeed = <0x4>;
++			cdns,phy-input-delay-legacy = <0x4>;
++			cdns,phy-input-delay-sd-uhs-sdr50 = <0x6>;
++			cdns,phy-input-delay-sd-uhs-ddr50 = <0x16>;
++			cdns,phy-dll-delay-sdclk = <0>;
++			cdns,phy-dll-delay-sdclk-hsmmc = <0>;
++			cdns,mmc-ddr-1_8v;
++			status = "disabled";
++		};
++
++		gic: interrupt-controller@800000 {
++			compatible = "arm,gic-v3";
++			#interrupt-cells = <3>;
++			#address-cells = <2>;
++			#size-cells = <2>;
++			ranges;
++			interrupt-controller;
++			reg = <0x0 0x800000 0x0 0x10000>,	/* GICD */
++			      <0x0 0x860000 0x0 0x200000>;	/* GICR */
++			interrupts = <GIC_PPI 9 IRQ_TYPE_LEVEL_HIGH>;
++
++			its: interrupt-controller@840000 {
++				compatible = "arm,gic-v3-its";
++				msi-controller;
++				#msi-cells = <1>;
++				reg = <0x0 0x840000 0x0 0x20000>;
++			};
++		};
++
++		mssoc: mssoc@61000000 {
++			compatible = "pensando,mssoc", "syscon";
++			reg = <0x0 0x61000000 0x0 0x80000>;
++		};
++
++		panic: panicdump {
++			compatible = "pensando,capri-crash";
++			status = "disabled";
++		};
++	};
++};
+diff --git a/arch/arm64/boot/dts/amd/salina-asic.dts b/arch/arm64/boot/dts/amd/salina-asic.dts
+new file mode 100644
+index 000000000000..f15e89e4bd1f
+--- /dev/null
++++ b/arch/arm64/boot/dts/amd/salina-asic.dts
+@@ -0,0 +1,80 @@
++// SPDX-License-Identifier: (GPL-2.0-only or BSD-2-Clause)
++/*
++ * Device Tree file for AMD Pensando Salina Board.
++ *
++ * Copyright 2023-2024 Advanced Micro Devices, Inc.
++ */
++
++/dts-v1/;
++
++#include "salina-asic.dtsi"
++#include "salina-16core.dtsi"
++#include "salina-n1-common.dtsi"
++#include "salina-n1-flash-parts.dtsi"
++#include "elba-asic-memory.dtsi"
++#include "elba-mdev.dtsi"
++
++/ {
++	model = "Salina ASIC Board";
++	compatible = "pensando,salina";
++
++	aliases {
++		serial1 = &uart1;
++		spi1 = &spi1;
++	};
++
++	chosen {
++		stdout-path = "serial1:115200n8";
++	};
++
++	tawkipc {
++		compatible = "amd,tawk-ipc";
++		peer-id = <1>;
++		#address-cells = <2>;
++		#size-cells = <1>;
++		reg = <0x0 0x0 0x0 0x0>,  /* doorbells */
++			<0x0 0x0 0x0 0x0>, /* msix-like table */
++			<0x47 0xe1d2b100 0x0 0x8>,  /* reset signal registers */
++			<0x47 0xe1d2c100 0x0 0x10>,     /* mailbox control registers */
++			<0x47 0xe1d2d100 0x0 0x800>;    /* mailbox buffers */
++		rst-sigs = <0x4 0x0>;
++		nmboxes = <2>;
++		mbox-ctl = <0x0 0x3>;
++		mbox-buf = <0x0 0xa 0x400>;
++		status = "okay";
++	};
++};
++
++&spi1 {
++	status = "okay";
++};
++
++&emmc_clk {
++	clock-frequency = <208000000>;
++};
++
++&emmc0 {
++	bus-width = <8>;
++	cap-mmc-hw-reset;
++	reset-names = "hw";
++	resets = <&rstc 0>;
++	status = "ok";
++};
++
++&i2c1 {
++	clock-frequency = <100000>;
++	status = "okay";
++
++	fru@64 {
++		compatible = "slave-24c32";
++		reg = <0x64>;
++	};
++};
++
++&soc {
++	rstc: reset-controller@0 {
++		compatible = "amd,pensando-salinasr-reset";
++		reg = <0x0 0x0 0x0 0xff>;
++		#reset-cells = <1>;
++	};
++};
+diff --git a/arch/arm64/boot/dts/amd/salina-asic.dtsi b/arch/arm64/boot/dts/amd/salina-asic.dtsi
+new file mode 100644
+index 000000000000..d17bf919741a
+--- /dev/null
++++ b/arch/arm64/boot/dts/amd/salina-asic.dtsi
+@@ -0,0 +1,281 @@
++// SPDX-License-Identifier: (GPL-2.0-only or BSD-2-Clause)
++/*
++ * Copyright 2023-2024 Advanced Micro Devices, Inc.
++ */
++
++#include <dt-bindings/gpio/gpio.h>
++#include "dt-bindings/interrupt-controller/arm-gic.h"
++#include "dt-bindings/interrupt-controller/irq.h"
++#include "dt-bindings/soc/pensando,capmem.h"
++
++/ {
++	interrupt-parent = <&gic>;
++	#address-cells = <2>;
++	#size-cells = <2>;
++
++	dma-coherent;
++
++	ahb_clk: oscillator0 {
++		compatible = "fixed-clock";
++		#clock-cells = <0>;
++	};
++
++	emmc_clk: oscillator2 {
++		compatible = "fixed-clock";
++		#clock-cells = <0>;
++	};
++
++	flash_clk: oscillator3 {
++		compatible = "fixed-clock";
++		#clock-cells = <0>;
++	};
++
++	ref_clk: oscillator4 {
++		compatible = "fixed-clock";
++		#clock-cells = <0>;
++	};
++
++	gmac_clk: oscillator5 {
++		compatible = "fixed-clock";
++		#clock-cells = <0>;
++	};
++
++	timer {
++		compatible = "arm,armv8-timer";
++		interrupts = <GIC_PPI 13 IRQ_TYPE_LEVEL_LOW>,
++			     <GIC_PPI 14 IRQ_TYPE_LEVEL_LOW>,
++			     <GIC_PPI 11 IRQ_TYPE_LEVEL_LOW>,
++			     <GIC_PPI 10 IRQ_TYPE_LEVEL_LOW>;
++	};
++
++	pmu {
++		compatible = "arm,armv8-pmuv3";
++		interrupts = <GIC_PPI 7 IRQ_TYPE_LEVEL_LOW>;
++	};
++
++	/* Common UIO device for MSI drivers */
++	uio_penmsi {
++		compatible = "pensando,uio_penmsi";
++		name = "uio_penmsi";
++	};
++
++	rstcause {
++		compatible = "pensando,rstcause";
++		pensando,causeregs = <&syscon 0x204>;
++	};
++
++	capmem {
++		compatible = "pensando,capmem";
++		pensando,capmem-fixed-ranges =
++			<0x0 0x10000 0x0 0x6fff0000 DSC_MEM_ATTR_DEVICE>,
++			<0x2 0x40000000 0x0 0x8000000 DSC_MEM_ATTR_DEVICE>;
++	};
++
++	soc: soc {
++		compatible = "simple-bus";
++		#address-cells = <2>;
++		#size-cells = <2>;
++		ranges;
++
++		i2c1: i2c@20000 {
++			compatible = "snps,designware-i2c";
++			reg = <0x0 0x20000 0x0 0x100>;
++			clocks = <&ahb_clk>;
++			#address-cells = <1>;
++			#size-cells = <0>;
++			i2c-sda-hold-time-ns = <480>;
++			snps,sda-timeout-ms = <750>;
++			interrupts = <GIC_SPI 8 IRQ_TYPE_LEVEL_HIGH>;
++			status = "disabled";
++		};
++
++		spi1: spi@c0000 {
++			compatible = "amd,pensando-elba-spi";
++			reg = <0x0 0xc0000 0x0 0x100>;
++			amd,pensando-elba-syscon = <&syscon>;
++			clocks = <&ahb_clk>;
++			interrupts = <GIC_SPI 11 IRQ_TYPE_LEVEL_HIGH>;
++			#address-cells = <1>;
++			#size-cells = <0>;
++			num-cs = <2>;
++			status = "disabled";
++		};
++
++		qspi0: spi@90000 {
++			compatible = "amd,pensando-elba-qspi";
++			#address-cells = <1>;
++			#size-cells = <0>;
++			reg = <0x0 0x90000 0x0 0x400>,
++			      <0x0 0x77ff0000 0x0 0x1000>;
++			interrupts = <GIC_SPI 0 IRQ_TYPE_LEVEL_HIGH>;
++			clocks = <&flash_clk>;
++			cdns,fifo-depth = <1024>;
++			cdns,fifo-width = <4>;
++			cdns,trigger-address = <0x07ff0000>;
++			status = "disabled";
++		};
++
++		gpio0: gpio@d0000 {
++			#address-cells = <1>;
++			#size-cells = <0>;
++			compatible = "snps,dw-apb-gpio";
++			reg = <0x0 0xd0000 0x0 0x78>;
++			status = "disabled";
++
++			porta: gpio-controller@0 {
++				compatible = "snps,dw-apb-gpio-port";
++				reg = <0>;
++				gpio-controller;
++				#gpio-cells = <2>;
++				ngpios = <8>;
++				interrupts = <GIC_SPI 2 IRQ_TYPE_LEVEL_HIGH>;
++				interrupt-controller;
++				interrupt-parent = <&gic>;
++				#interrupt-cells = <2>;
++			};
++			portb: gpio-controller@1 {
++				compatible = "snps,dw-apb-gpio-port";
++				reg = <1>;
++				gpio-controller;
++				#gpio-cells = <2>;
++				ngpios = <8>;
++			};
++		};
++
++		gpio1: gpio@e0000 {
++			#address-cells = <1>;
++			#size-cells = <0>;
++			compatible = "snps,dw-apb-gpio";
++			reg = <0x0 0xe0000 0x0 0x78>;
++			status = "disabled";
++		};
++
++		uart1: serial@100000 {
++			device_type = "serial";
++			compatible = "ns16550a";
++			reg = <0x0 0x100000 0x0 0x100>;
++			clocks = <&ref_clk>;
++			interrupts = <GIC_SPI 5 IRQ_TYPE_LEVEL_HIGH>;
++			reg-shift = <2>;
++			reg-io-width = <4>;
++		};
++
++		emmc0: sdio-host-chip@600000 {
++			compatible = "amd,pensando-salina-sd4hc", "cdns,sd4hc";
++			clocks = <&emmc_clk>;
++			interrupts = <GIC_SPI 51 IRQ_TYPE_LEVEL_HIGH>;
++			reg = <0x0 0x600000 0x0 0x10000
++			       0x0 0x680044 0x0 0x4>;
++			mmc-ddr-1_8v;
++			mmc-hs200-1_8v;
++			mmc-hs400-1_8v;
++			cdns,phy-input-delay-sd-highspeed = <0x4>;
++			cdns,phy-input-delay-legacy = <0x4>;
++			cdns,phy-input-delay-sd-uhs-sdr50 = <0x6>;
++			cdns,phy-input-delay-sd-uhs-ddr50 = <0x16>;
++			cdns,phy-dll-delay-sdclk = <0x1f>;
++			status = "disabled";
++		};
++
++		cmn_pmu_int: interrupt-controller@42200000 {
++			compatible = "pensando,salina-cmn-pmu-interrupt";
++			interrupt-controller;
++			reg = <0x0 0x42200000 0x0 0x40>;
++			#interrupt-cells = <3>;
++			interrupt-parent = <&gic>;
++			interrupts = <GIC_SPI 21 IRQ_TYPE_LEVEL_HIGH>;
++			interrupt-names = "cmn_pmu_int";
++		};
++
++		cmn_pmu@400000000 {
++			compatible = "arm,cmn-700";
++			#address-cells = <2>;
++			#size-cells = <2>;
++			/* base 0x4_0000_0000	size 256MB */
++			reg = <0x4 0x0 0x0 0x10000000>;
++			interrupts = <GIC_SPI 21 IRQ_TYPE_LEVEL_HIGH>;
++		};
++
++		stmmac_axi_setup: stmmac-axi-config {
++			snps,wr_osr_lmt = <0>;
++			snps,rd_osr_lmt = <0>;
++			snps,blen = <0 0 0 0 0 4 0>;
++		};
++
++		gmac0: ethernet@6d73a000 {
++			compatible = "snps,dwmac-3.70a", "snps,dwmac";
++			reg = <0x0 0x6d73a000 0x0 0x8000>;
++			clocks = <&gmac_clk>;
++			clock-names = "stmmaceth";
++			interrupts = <GIC_SPI 57 IRQ_TYPE_LEVEL_HIGH>;
++			interrupt-names = "macirq";
++			mac-address = [00 ae cd 10 96 38]; /* Filled in by U-Boot */
++			max-frame-size = <3800>;
++			phy-mode = "gmii";
++			snps,fixed-burst;
++			snps,multicast-filter-bins = <256>;
++			snps,perfect-filter-entries = <128>;
++			rx-fifo-depth = <16384>;
++			tx-fifo-depth = <16384>;
++			snps,axi-config = <&stmmac_axi_setup>;
++			snps,pbl = <2>;
++			fixed-link {
++				speed = <1000>;
++				full-duplex;
++			};
++		};
++
++		gmac1: ethernet@6df3a000 {
++			compatible = "snps,dwmac-3.70a", "snps,dwmac";
++			reg = <0x0 0x6df3a000 0x0 0x8000>;
++			clocks = <&gmac_clk>;
++			clock-names = "stmmaceth";
++			interrupts = <GIC_SPI 58 IRQ_TYPE_LEVEL_HIGH>;
++			interrupt-names = "macirq";
++			mac-address = [00 ae cd 10 96 39];/* Filled in by U-Boot */
++			max-frame-size = <3800>;
++			phy-mode = "gmii";
++			snps,fixed-burst;
++			snps,multicast-filter-bins = <256>;
++			snps,perfect-filter-entries = <128>;
++			rx-fifo-depth = <16384>;
++			tx-fifo-depth = <16384>;
++			snps,axi-config = <&stmmac_axi_setup>;
++			snps,pbl = <2>;
++			fixed-link {
++				speed = <1000>;
++				full-duplex;
++			};
++		};
++
++		gic: interrupt-controller@1000000 {
++			compatible = "arm,gic-v3";
++			#address-cells = <2>;
++			#interrupt-cells = <3>;
++			#size-cells = <2>;
++			ranges;
++			interrupt-controller;
++			reg = <0x0 0x1000000 0 0x10000>,	/* GICD */
++			      <0x0 0x1060000 0 0x200000>;	/* GICR */
++			interrupts = <GIC_PPI 9 IRQ_TYPE_LEVEL_HIGH>;
++
++			gic_its: interrupt-controller@1040000 {
++				compatible = "arm,gic-v3-its";
++				msi-controller;
++				#msi-cells = <1>;
++				reg = <0x0 0x1040000 0x0 0x20000>, /* ITS */
++				      <0x0 0x1400040 0x0 0x4>;	   /* MSI encapsulator */
++			};
++		};
++
++		syscon: syscon@61000000 {
++			compatible = "amd,pensando-elba-syscon", "syscon";
++			reg = <0x0 0x61000000 0x0 0x80000>;
++		};
++
++		panic: panicdump {
++			compatible = "pensando,capri-crash";
++			status = "disabled";
++		};
++	};
++};
+diff --git a/arch/arm64/boot/dts/amd/salina-haps-16core.dts b/arch/arm64/boot/dts/amd/salina-haps-16core.dts
+new file mode 100644
+index 000000000000..5ff24af9bf2b
+--- /dev/null
++++ b/arch/arm64/boot/dts/amd/salina-haps-16core.dts
+@@ -0,0 +1,98 @@
++// SPDX-License-Identifier: (GPL-2.0-only or BSD-2-Clause)
++/*
++ * Device Tree file for AMD Pensando Salina Emulation Board.
++ *
++ * Copyright 2023-2024 Advanced Micro Devices, Inc.
++ */
++
++/dts-v1/;
++
++#include "salina-haps.dtsi"
++#include "salina-16core-spin-table.dtsi"
++#include "salina-haps-common.dtsi"
++#include "elba-flash-parts.dtsi"
++
++/ {
++	model = "Salina HAPS Emulation Board";
++	compatible = "pensando,salina";
++
++	aliases {
++		serial0 = &uart0;
++		spi0 = &spi0;
++		spi1 = &spi1;
++		spi2 = &qspi;
++	};
++
++	chosen {
++		stdout-path = "serial0:19200n8";
++	};
++};
++
++&spi0 {
++	status = "okay";
++};
++
++&emmc_clk {
++	clock-frequency = <208000000>;
++};
++
++&emmc {
++	bus-width = <8>;
++	status = "ok";
++};
++
++&i2c0 {
++	clock-frequency = <100000>;
++	status = "okay";
++
++	temp-sensor@1f {
++		compatible = "ti,tmp421";
++		reg = <0x1f>;
++	};
++};
++
++&i2c1 {
++	clock-frequency = <100000>;
++	status = "okay";
++
++	at24c02@51 {
++		compatible = "atmel,spd";
++		reg = <0x51>;
++	};
++};
++
++&i2c2 {
++	clock-frequency = <100000>;
++	status = "okay";
++
++	pca9551@60{
++		compatible = "nxp,pca9551";
++		reg = <0x60>;
++	};
++};
++
++&i2c3 {
++	clock-frequency = <100000>;
++	status = "okay";
++
++	at24c02@50 {
++		compatible = "atmel,spd";
++		reg = <0x50>;
++	};
++};
++
++&wdt0 {
++	status = "okay";
++};
++
++&wdt1 {
++	status = "okay";
++};
++
++&wdt2 {
++	status = "okay";
++};
++
++&wdt3 {
++	status = "okay";
++};
+diff --git a/arch/arm64/boot/dts/amd/salina-haps-4core.dts b/arch/arm64/boot/dts/amd/salina-haps-4core.dts
+new file mode 100644
+index 000000000000..4c58d62f2438
+--- /dev/null
++++ b/arch/arm64/boot/dts/amd/salina-haps-4core.dts
+@@ -0,0 +1,71 @@
++// SPDX-License-Identifier: (GPL-2.0-only or BSD-2-Clause)
++/*
++ * Device Tree file for AMD Pensando Salina Emulation Board.
++ *
++ * Copyright 2023-2024 Advanced Micro Devices, Inc.
++ */
++
++/dts-v1/;
++
++#include "salina-haps.dtsi"
++#include "salina-4core-spin-table.dtsi"
++#include "salina-haps-common.dtsi"
++#include "elba-flash-parts.dtsi"
++
++/ {
++	model = "Salina HAPS Emulation Board";
++	compatible = "pensando,salina";
++
++	aliases {
++		serial0 = &uart0;
++		spi0 = &spi0;
++		spi1 = &spi1;
++		spi2 = &qspi;
++	};
++
++	chosen {
++		stdout-path = "serial0:19200n8";
++	};
++};
++
++&spi0 {
++	status = "okay";
++};
++
++&spi1 {
++	status = "okay";
++};
++
++&emmc_clk {
++	clock-frequency = <208000000>;
++};
++
++&emmc {
++	bus-width = <8>;
++	status = "ok";
++};
++
++&i2c0 {
++	clock-frequency = <100000>;
++	status = "okay";
++};
++
++&i2c1 {
++	clock-frequency = <100000>;
++	status = "okay";
++
++	rtc@51 {
++		compatible = "nxp,pcf85263";
++		reg = <0x51>;
++	};
++};
++
++&i2c2 {
++	clock-frequency = <100000>;
++	status = "okay";
++};
++
++&i2c3 {
++	clock-frequency = <100000>;
++	status = "okay";
++};
+diff --git a/arch/arm64/boot/dts/amd/salina-haps-common.dtsi b/arch/arm64/boot/dts/amd/salina-haps-common.dtsi
+new file mode 100644
+index 000000000000..f109e886d850
+--- /dev/null
++++ b/arch/arm64/boot/dts/amd/salina-haps-common.dtsi
+@@ -0,0 +1,109 @@
++// SPDX-License-Identifier: (GPL-2.0-only or BSD-2-Clause)
++/*
++ * Copyright 2023-2024 Advanced Micro Devices, Inc.
++ */
++
++&ahb_clk {
++	clock-frequency = <4160000>;
++};
++
++&emmc_clk {
++	clock-frequency = <208000000>;
++};
++
++&flash_clk {
++	clock-frequency = <2000000>;
++};
++
++&ref_clk {
++	clock-frequency = <1562500>;	/* UART 115200 works at 19200 */
++};
++
++&qspi {
++	status = "okay";
++	flash0: mt25q@0 {
++		compatible = "jedec,spi-nor";
++		reg = <0>;
++		spi-max-frequency = <250000>;
++		spi-rx-bus-width = <4>;
++		m25p,fast-read;
++		cdns,read-delay = <0>;
++		cdns,tshsl-ns = <0>;
++		cdns,tsd2d-ns = <0>;
++		cdns,tchsh-ns = <0>;
++		cdns,tslch-ns = <0>;
++	};
++};
++
++
++&gpio0 {
++	status = "ok";
++};
++
++&gpio1 {
++	status = "ok";
++};
++
++&emmc {
++	status = "ok";
++};
++
++&spi0 {
++	status = "okay";
++
++	flash1: cysnor@0 {
++		compatible = "jedec,spi-nor";
++		reg = <0>;
++		spi-max-frequency = <50000>;
++		spi-rx-bus-width = <1>;
++		m25p,fast-read;
++		cdns,read-delay = <0>;
++		cdns,tshsl-ns = <0>;
++		cdns,tsd2d-ns = <0>;
++		cdns,tchsh-ns = <0>;
++		cdns,tslch-ns = <0>;
++	};
++
++	flash2: cysnor@1 {
++		compatible = "jedec,spi-nor";
++		reg = <1>;
++		spi-max-frequency = <50000>;
++		spi-rx-bus-width = <1>;
++		m25p,fast-read;
++		cdns,read-delay = <0>;
++		cdns,tshsl-ns = <0>;
++		cdns,tsd2d-ns = <0>;
++		cdns,tchsh-ns = <0>;
++		cdns,tslch-ns = <0>;
++	};
++};
++
++&spi1 {
++	status = "okay";
++
++	flash3: cysnor@0 {
++		compatible = "jedec,spi-nor";
++		reg = <0>;
++		spi-max-frequency = <50000>;
++		spi-rx-bus-width = <1>;
++		m25p,fast-read;
++		cdns,read-delay = <0>;
++		cdns,tshsl-ns = <0>;
++		cdns,tsd2d-ns = <0>;
++		cdns,tchsh-ns = <0>;
++		cdns,tslch-ns = <0>;
++		};
++
++	flash4: cysnor@1 {
++		compatible = "jedec,spi-nor";
++		reg = <1>;
++		spi-max-frequency = <50000>;
++		spi-rx-bus-width = <1>;
++		m25p,fast-read;
++		cdns,read-delay = <0>;
++		cdns,tshsl-ns = <0>;
++		cdns,tsd2d-ns = <0>;
++		cdns,tchsh-ns = <0>;
++		cdns,tslch-ns = <0>;
++	};
++};
+diff --git a/arch/arm64/boot/dts/amd/salina-haps.dtsi b/arch/arm64/boot/dts/amd/salina-haps.dtsi
+new file mode 100644
+index 000000000000..9a68b1f5a8e0
+--- /dev/null
++++ b/arch/arm64/boot/dts/amd/salina-haps.dtsi
+@@ -0,0 +1,308 @@
++// SPDX-License-Identifier: (GPL-2.0-only or BSD-2-Clause)
++/*
++ * Copyright 2023-2024 Advanced Micro Devices, Inc.
++ */
++
++#include <dt-bindings/gpio/gpio.h>
++#include "dt-bindings/interrupt-controller/arm-gic.h"
++#include "dt-bindings/interrupt-controller/irq.h"
++
++/ {
++	interrupt-parent = <&gic>;
++	#address-cells = <2>;
++	#size-cells = <2>;
++
++	dma-coherent;
++
++	ahb_clk: oscillator0 {
++		compatible = "fixed-clock";
++		#clock-cells = <0>;
++	};
++
++	emmc_clk: oscillator2 {
++		compatible = "fixed-clock";
++		#clock-cells = <0>;
++	};
++
++	flash_clk: oscillator3 {
++		compatible = "fixed-clock";
++		#clock-cells = <0>;
++	};
++
++	ref_clk: oscillator4 {
++		compatible = "fixed-clock";
++		#clock-cells = <0>;
++	};
++
++	gmac_clk: oscillator5 {
++		compatible = "fixed-clock";
++		#clock-cells = <0>;
++	};
++
++	psci {
++		compatible = "arm,psci-0.2";
++		method = "smc";
++	};
++
++	timer {
++		compatible = "arm,armv8-timer";
++		interrupts = <GIC_PPI 13 IRQ_TYPE_LEVEL_LOW>,
++			     <GIC_PPI 14 IRQ_TYPE_LEVEL_LOW>,
++			     <GIC_PPI 11 IRQ_TYPE_LEVEL_LOW>,
++			     <GIC_PPI 10 IRQ_TYPE_LEVEL_LOW>;
++	};
++
++	pmu {
++		compatible = "arm,armv8-pmuv3";
++		interrupts = <GIC_PPI 7 IRQ_TYPE_LEVEL_LOW>;
++	};
++
++	/* Common UIO device for MSI drivers */
++	uio_penmsi {
++		compatible = "pensando,uio_penmsi";
++		name = "uio_penmsi";
++	};
++
++	rstcause {
++		compatible = "pensando,rstcause";
++		pensando,causeregs = <&mssoc 0x204>;
++	};
++
++	capmem {
++		compatible = "pensando,capmem";
++	};
++
++	soc: soc {
++		compatible = "simple-bus";
++		#address-cells = <2>;
++		#size-cells = <2>;
++		ranges;
++
++		i2c0: i2c@10000 {
++			compatible = "snps,designware-i2c";
++			reg = <0x0 0x10000 0x0 0x100>;
++			clocks = <&ahb_clk>;
++			#address-cells = <1>;
++			#size-cells = <0>;
++			i2c-sda-hold-time-ns = <480>;
++			snps,sda-timeout-ms = <750>;
++			interrupts = <GIC_SPI 7 IRQ_TYPE_LEVEL_HIGH>;
++			status = "disabled";
++		};
++
++		i2c1: i2c@20000 {
++			compatible = "snps,designware-i2c";
++			reg = <0x0 0x20000 0x0 0x100>;
++			clocks = <&ahb_clk>;
++			#address-cells = <1>;
++			#size-cells = <0>;
++			i2c-sda-hold-time-ns = <480>;
++			snps,sda-timeout-ms = <750>;
++			interrupts = <GIC_SPI 8 IRQ_TYPE_LEVEL_HIGH>;
++			status = "disabled";
++		};
++
++		i2c2: i2c@30000 {
++			compatible = "snps,designware-i2c";
++			reg = <0x0 0x30000 0x0 0x100>;
++			clocks = <&ahb_clk>;
++			#address-cells = <1>;
++			#size-cells = <0>;
++			i2c-sda-hold-time-ns = <480>;
++			snps,sda-timeout-ms = <750>;
++			interrupts = <GIC_SPI 9 IRQ_TYPE_LEVEL_HIGH>;
++			status = "disabled";
++		};
++
++		i2c3: i2c@40000 {
++			compatible = "snps,designware-i2c";
++			reg = <0x0 0x40000 0x0 0x100>;
++			clocks = <&ahb_clk>;
++			#address-cells = <1>;
++			#size-cells = <0>;
++			i2c-sda-hold-time-ns = <480>;
++			snps,sda-timeout-ms = <750>;
++			interrupts = <GIC_SPI 10 IRQ_TYPE_LEVEL_HIGH>;
++			status = "disabled";
++		};
++
++		wdt0: watchdog@50000 {
++			compatible = "snps,dw-wdt";
++			reg = <0x0 0x50000 0x0 0x100>;
++			clocks = <&ahb_clk>;
++			interrupts = <GIC_SPI 13 IRQ_TYPE_LEVEL_HIGH>;
++			status = "disabled";
++		};
++
++		wdt1: watchdog@60000 {
++			compatible = "snps,dw-wdt";
++			reg = <0x0 0x60000 0x0 0x100>;
++			clocks = <&ahb_clk>;
++			interrupts = <GIC_SPI 14 IRQ_TYPE_LEVEL_HIGH>;
++			status = "disabled";
++		};
++
++		wdt2: watchdog@70000 {
++			compatible = "snps,dw-wdt";
++			reg = <0x0 0x70000 0x0 0x100>;
++			clocks = <&ahb_clk>;
++			interrupts = <GIC_SPI 15 IRQ_TYPE_LEVEL_HIGH>;
++			status = "disabled";
++		};
++
++		wdt3: watchdog@80000 {
++			compatible = "snps,dw-wdt";
++			reg = <0x0 0x80000 0x0 0x100>;
++			clocks = <&ahb_clk>;
++			interrupts = <GIC_SPI 16 IRQ_TYPE_LEVEL_HIGH>;
++			status = "disabled";
++		};
++
++		qspi: spi@90000 {
++			compatible = "pensando,elba-qspi";
++			#address-cells = <1>;
++			#size-cells = <0>;
++			reg = <0x0 0x90000 0x0 0x400>,
++			      <0x0 0x77ff0000 0x0 0x1000>;
++			interrupts = <GIC_SPI 0 IRQ_TYPE_LEVEL_HIGH>;
++			clocks = <&flash_clk>;
++			cdns,fifo-depth = <1024>;
++			cdns,fifo-width = <4>;
++			cdns,trigger-address = <0x07ff0000>;
++			status = "disabled";
++		};
++
++		spi0: spi@b0000 {
++			compatible = "pensando,elba-spi";
++			reg = <0x0 0xb0000 0x0 0x100>;
++			pensando,spics = <&mssoc 0x668 0>;
++			clocks = <&ahb_clk>;
++			interrupts = <GIC_SPI 12 IRQ_TYPE_LEVEL_HIGH>;
++			#address-cells = <1>;
++			#size-cells = <0>;
++			num-cs = <2>;
++			status = "disabled";
++		};
++
++		spi1: spi@c0000 {
++			compatible = "pensando,elba-spi";
++			reg = <0x0 0xc0000 0x0 0x100>;
++			pensando,spics = <&mssoc 0x66c 0>;
++			clocks = <&ahb_clk>;
++			interrupts = <GIC_SPI 11 IRQ_TYPE_LEVEL_HIGH>;
++			#address-cells = <1>;
++			#size-cells = <0>;
++			num-cs = <2>;
++			status = "disabled";
++		};
++
++		gpio0: gpio@d0000 {
++			#address-cells = <1>;
++			#size-cells = <0>;
++			compatible = "snps,dw-apb-gpio";
++			reg = <0x0 0xd0000 0x0 0x78>;
++			status = "disabled";
++
++			porta: gpio-controller@0 {
++				compatible = "snps,dw-apb-gpio-port";
++				reg = <0>;
++				gpio-controller;
++				#gpio-cells = <2>;
++				ngpios = <8>;
++				interrupts = <GIC_SPI 2 IRQ_TYPE_LEVEL_HIGH>;
++				interrupt-controller;
++				interrupt-parent = <&gic>;
++				#interrupt-cells = <2>;
++			};
++			portb: gpio-controller@1 {
++				compatible = "snps,dw-apb-gpio-port";
++				reg = <1>;
++				gpio-controller;
++				#gpio-cells = <2>;
++				ngpios = <8>;
++			};
++		};
++
++		gpio1: gpio@e0000 {
++			#address-cells = <1>;
++			#size-cells = <0>;
++			compatible = "snps,dw-apb-gpio";
++			reg = <0x0 0xe0000 0x0 0x78>;
++			status = "disabled";
++		};
++
++		uart0: serial@f0000 {
++			compatible = "ns16550a";
++			reg = <0x0 0xf0000 0x0 0x100>;
++			clocks = <&ref_clk>;
++			interrupts = <GIC_SPI 4 IRQ_TYPE_LEVEL_HIGH>;
++			reg-shift = <2>;
++			reg-io-width = <4>;
++		};
++
++		uart1: serial@100000 {
++			device_type = "serial";
++			compatible = "ns16550a";
++			reg = <0x0 0x100000 0x0 0x100>;
++			clocks = <&ref_clk>;
++			interrupts = <GIC_SPI 5 IRQ_TYPE_LEVEL_HIGH>;
++			reg-shift = <2>;
++			reg-io-width = <4>;
++		};
++
++		uart2: serial@110000 {
++			device_type = "serial";
++			compatible = "ns16550a";
++			reg = <0x0 0x110000 0x0 0x100>;
++			clocks = <&ref_clk>;
++			interrupts = <GIC_SPI 6 IRQ_TYPE_LEVEL_HIGH>;
++			reg-shift = <2>;
++			reg-io-width = <4>;
++		};
++
++		emmc: sdio-host-chip@600000 {
++			compatible = "cdns,sd4hc";
++			clocks = <&emmc_clk>;
++			interrupts = <GIC_SPI 51 IRQ_TYPE_LEVEL_HIGH>;
++			reg = <0x0 0x600000 0x0 0x10000
++			       0x0 0x680044 0x0 0x4>;
++			cdns,phy-input-delay-sd-highspeed = <0x4>;
++			cdns,phy-input-delay-legacy = <0x4>;
++			cdns,phy-input-delay-sd-uhs-sdr50 = <0x6>;
++			cdns,phy-input-delay-sd-uhs-ddr50 = <0x16>;
++			cdns,phy-dll-delay-sdclk = <0>;
++			cdns,phy-dll-delay-sdclk-hsmmc = <0>;
++			cdns,mmc-ddr-1_8v;
++			status = "disabled";
++		};
++
++		gic: interrupt-controller@1000000 {
++			compatible = "arm,gic-v3";
++			#address-cells = <2>;
++			#interrupt-cells = <3>;
++			#size-cells = <2>;
++			ranges;
++			interrupt-controller;
++			reg = <0x0 0x1000000 0 0x10000>,	/* GICD */
++			      <0x0 0x1060000 0 0x200000>;	/* GICR */
++			interrupts = <GIC_PPI 9 IRQ_TYPE_LEVEL_HIGH>;
++
++			gic_its: interrupt-controller@1040000 {
++				compatible = "arm,gic-v3-its";
++				msi-controller;
++				#msi-cells = <1>;
++				reg = <0x0 0x1040000 0x0 0x20000>;
++			};
++		};
++
++		mssoc: mssoc@61000000 {
++			compatible = "pensando,mssoc", "syscon";
++			reg = <0x0 0x61000000 0x0 0x80000>;
++		};
++
++		panic: panicdump {
++			compatible = "pensando,capri-crash";
++			status = "disabled";
++		};
++	};
++};
+diff --git a/arch/arm64/boot/dts/amd/salina-n1-common.dtsi b/arch/arm64/boot/dts/amd/salina-n1-common.dtsi
+new file mode 100644
+index 000000000000..7ef4dbae097c
+--- /dev/null
++++ b/arch/arm64/boot/dts/amd/salina-n1-common.dtsi
+@@ -0,0 +1,62 @@
++// SPDX-License-Identifier: (GPL-2.0-only or BSD-2-Clause)
++/*
++ * Copyright 2023-2024 Advanced Micro Devices, Inc.
++ */
++
++&ahb_clk {
++	clock-frequency = <400000000>;
++};
++
++&emmc_clk {
++	clock-frequency = <200000000>;
++};
++
++&flash_clk {
++	clock-frequency = <400000000>;
++};
++
++&ref_clk {
++	clock-frequency = <100000000>;
++};
++
++&gpio0 {
++	status = "ok";
++};
++
++&gpio1 {
++	status = "ok";
++};
++
++&spi1 {
++	status = "okay";
++
++	flash1: cysnor@0 {
++		compatible = "jedec,spi-nor";
++		reg = <0>;
++		spi-max-frequency = <50000>;
++		spi-rx-bus-width = <1>;
++		m25p,fast-read;
++		cdns,read-delay = <0>;
++		cdns,tshsl-ns = <0>;
++		cdns,tsd2d-ns = <0>;
++		cdns,tchsh-ns = <0>;
++		cdns,tslch-ns = <0>;
++		};
++};
++
++&qspi0 {
++	status = "okay";
++
++	flash0: flash@0 {
++		compatible = "jedec,spi-nor";
++		reg = <0>;
++		spi-max-frequency = <24000000>;
++		spi-rx-bus-width = <2>;
++		m25p,fast-read;
++		cdns,read-delay = <0>;
++		cdns,tshsl-ns = <0>;
++		cdns,tsd2d-ns = <0>;
++		cdns,tchsh-ns = <0>;
++		cdns,tslch-ns = <0>;
++	};
++};
+diff --git a/arch/arm64/boot/dts/amd/salina-n1-flash-parts.dtsi b/arch/arm64/boot/dts/amd/salina-n1-flash-parts.dtsi
+new file mode 100644
+index 000000000000..a1e1e8b4ed8d
+--- /dev/null
++++ b/arch/arm64/boot/dts/amd/salina-n1-flash-parts.dtsi
+@@ -0,0 +1,17 @@
++// SPDX-License-Identifier: (GPL-2.0-only or BSD-2-Clause)
++/*
++ * Copyright 2024 Advanced Micro Devices, Inc.
++ */
++
++&flash0 {
++	partitions {
++		compatible = "fixed-partitions";
++		#address-cells = <1>;
++		#size-cells = <1>;
++
++		partition@0 {
++			label = "qspi0";
++			reg = <0x0 0x10000000>;
++		};
++	};
++};
+diff --git a/include/dt-bindings/soc/pensando,capmem.h b/include/dt-bindings/soc/pensando,capmem.h
+new file mode 100644
+index 000000000000..af9fb02facc1
+--- /dev/null
++++ b/include/dt-bindings/soc/pensando,capmem.h
+@@ -0,0 +1,14 @@
++/* SPDX-License-Identifier: (GPL-2.0-only OR MIT) */
++
++#ifndef _DT_BINDINGS_PENSANDO_CAPMEM_H
++#define _DT_BINDINGS_PENSANDO_CAPMEM_H
++
++/*
++ * Memory range attrbutes passed in via the device-tree
++ */
++#define DSC_MEM_ATTR_NONCOHERENT	0x0	/* range is DMA noncoherent */
++#define DSC_MEM_ATTR_COHERENT		0x1	/* range is DMA coherent */
++#define DSC_MEM_ATTR_BYPASS		0x2	/* range is LLC bypass */
++#define DSC_MEM_ATTR_DEVICE		0x4	/* range is device */
++
++#endif /* _DT_BINDINGS_PENSANDO_CAPMEM_H */
+-- 
+2.25.1
+

@@ -1,0 +1,52 @@
+From 1276239489971f3e9e761071c56d004e05fb07f4 Mon Sep 17 00:00:00 2001
+From: Brad Larson <bradley.larson@amd.com>
+Date: Wed, 2 Apr 2025 12:18:27 -0700
+Subject: [PATCH 15/17] spi: dw-mmio: Add AMD Pensando Salina SoC support
+
+The Salina SoC is identical to Elba except for a different
+spics control register offset
+
+Signed-off-by: Brad Larson <bradley.larson@amd.com>
+---
+ drivers/gpio/Kconfig      | 8 ++++++++
+ drivers/spi/spi-dw-mmio.c | 4 ++++
+ 2 files changed, 12 insertions(+)
+
+diff --git a/drivers/gpio/Kconfig b/drivers/gpio/Kconfig
+index 353af1a4d0ac..bb257e561c1e 100644
+--- a/drivers/gpio/Kconfig
++++ b/drivers/gpio/Kconfig
+@@ -573,6 +573,14 @@ config GPIO_RTD
+ 	  Say yes here to support GPIO functionality and GPIO interrupt on
+ 	  Realtek DHC SoCs.
+ 
++config GPIO_SALINA_SPICS
++	bool "Pensando Salina SPI chip-select"
++	depends on ARCH_PENSANDO_SALINA_SOC
++	help
++	  Say yes here to support the Pensndo Salina SoC SPI chip-select driver.
++	  This option enables multiple chip-selects to the Pensando system
++	  controller CPLD device for board management.
++
+ config GPIO_SAMA5D2_PIOBU
+ 	tristate "SAMA5D2 PIOBU GPIO support"
+ 	depends on MFD_SYSCON
+diff --git a/drivers/spi/spi-dw-mmio.c b/drivers/spi/spi-dw-mmio.c
+index cc74cbe03431..02a4f1900531 100644
+--- a/drivers/spi/spi-dw-mmio.c
++++ b/drivers/spi/spi-dw-mmio.c
+@@ -61,7 +61,11 @@ struct dw_spi_mscc {
+  * bit: |---3-------2-------1-------0
+  *      |  cs1   cs1_ovr   cs0   cs0_ovr
+  */
++#ifdef CONFIG_ARCH_PENSANDO_SALINA_SOC
++#define ELBA_SPICS_REG			0x66c
++#else
+ #define ELBA_SPICS_REG			0x2468
++#endif
+ #define ELBA_SPICS_OFFSET(cs)		((cs) << 1)
+ #define ELBA_SPICS_MASK(cs)		(GENMASK(1, 0) << ELBA_SPICS_OFFSET(cs))
+ #define ELBA_SPICS_SET(cs, val)		\
+-- 
+2.25.1
+
