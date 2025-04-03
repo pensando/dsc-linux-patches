@@ -1,0 +1,29 @@
+From 6c26783d43bf8682d2c58d89394c1fe3cc4bb102 Mon Sep 17 00:00:00 2001
+From: Brad Larson <bradley.larson@amd.com>
+Date: Wed, 2 Apr 2025 12:06:09 -0700
+Subject: [PATCH 11/17] mtd: spi-nor: winbond: Add support for W25Q02NW
+
+Signed-off-by: Brad Larson <bradley.larson@amd.com>
+---
+ drivers/mtd/spi-nor/winbond.c | 5 +++++
+ 1 file changed, 5 insertions(+)
+
+diff --git a/drivers/mtd/spi-nor/winbond.c b/drivers/mtd/spi-nor/winbond.c
+index 142fb27b2ea9..4e1eb74df73b 100644
+--- a/drivers/mtd/spi-nor/winbond.c
++++ b/drivers/mtd/spi-nor/winbond.c
+@@ -226,6 +226,11 @@ static const struct flash_info winbond_nor_parts[] = {
+ 		.id = SNOR_ID(0xef, 0x80, 0x20),
+ 		.name = "w25q512nwm",
+ 		.otp = SNOR_OTP(256, 3, 0x1000, 0x1000),
++	}, {
++		.id = SNOR_ID(0xef, 0x80, 0x22),
++		.name = "w25q02nw",
++		.size = SZ_256M,
++		.no_sfdp_flags = SECT_4K | SPI_NOR_DUAL_READ | SPI_NOR_QUAD_READ,
+ 	},
+ };
+ 
+-- 
+2.25.1
+

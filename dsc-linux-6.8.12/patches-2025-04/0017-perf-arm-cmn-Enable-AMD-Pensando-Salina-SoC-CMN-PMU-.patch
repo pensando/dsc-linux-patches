@@ -1,0 +1,40 @@
+From d577cb703abfeb0ba5ec49b72cde47ae3b9b1937 Mon Sep 17 00:00:00 2001
+From: Brad Larson <bradley.larson@amd.com>
+Date: Wed, 2 Apr 2025 12:27:43 -0700
+Subject: [PATCH 17/17] perf/arm-cmn: Enable AMD Pensando Salina SoC CMN PMU
+ driver
+
+- Salina SoC does not have a direct interrupt wired to GIC.  This
+  requires use of the PRP interrupt chain to make the interrupt work.
+
+- The Giglio SoC similarly requires use of PRP interrupt chain
+  for eMMC interrupt handling.
+
+Signed-off-by: Brad Larson <bradley.larson@amd.com>
+---
+ drivers/perf/arm-cmn.c | 6 ++++++
+ 1 file changed, 6 insertions(+)
+
+diff --git a/drivers/perf/arm-cmn.c b/drivers/perf/arm-cmn.c
+index 7e3aa7e2345f..f27c9cc20e35 100644
+--- a/drivers/perf/arm-cmn.c
++++ b/drivers/perf/arm-cmn.c
+@@ -2015,9 +2015,15 @@ static int arm_cmn_init_irqs(struct arm_cmn *cmn)
+ 				goto next;
+ 			}
+ 		}
++#if defined(CONFIG_ARCH_PENSANDO_GIGLIO_SOC) || defined(CONFIG_ARCH_PENSANDO_SALINA_SOC)
++		err = devm_request_irq(cmn->dev, irq, arm_cmn_handle_irq,
++				       IRQF_NOBALANCING | IRQF_NO_THREAD | IRQF_SHARED,
++				       dev_name(cmn->dev), &cmn->dtc[i]);
++#else
+ 		err = devm_request_irq(cmn->dev, irq, arm_cmn_handle_irq,
+ 				       IRQF_NOBALANCING | IRQF_NO_THREAD,
+ 				       dev_name(cmn->dev), &cmn->dtc[i]);
++#endif
+ 		if (err)
+ 			return err;
+ 
+-- 
+2.25.1
+
