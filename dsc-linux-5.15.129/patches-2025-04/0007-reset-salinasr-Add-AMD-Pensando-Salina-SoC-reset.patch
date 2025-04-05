@@ -1,0 +1,208 @@
+From 725361f0a93406e36cf44041eeb9d5ea23e9af59 Mon Sep 17 00:00:00 2001
+From: Brad Larson <bradley.larson@amd.com>
+Date: Sat, 5 Apr 2025 11:55:17 -0700
+Subject: [PATCH 7/8] reset: salinasr: Add AMD Pensando Salina SoC reset
+
+Support hardware reset of eMMC
+
+Signed-off-by: Brad Larson <bradley.larson@amd.com>
+---
+ drivers/reset/Kconfig          |  10 +++
+ drivers/reset/Makefile         |   1 +
+ drivers/reset/reset-salinasr.c | 151 +++++++++++++++++++++++++++++++++
+ 3 files changed, 162 insertions(+)
+ create mode 100644 drivers/reset/reset-salinasr.c
+
+diff --git a/drivers/reset/Kconfig b/drivers/reset/Kconfig
+index 96501b0eddd9..9951047cf386 100644
+--- a/drivers/reset/Kconfig
++++ b/drivers/reset/Kconfig
+@@ -197,6 +197,16 @@ config RESET_RZG2L_USBPHY_CTRL
+ 	  Support for USBPHY Control found on RZ/G2L family. It mainly
+ 	  controls reset and power down of the USB/PHY.
+ 
++config RESET_SALINASR
++	tristate "AMD Pensando Salina System Resource reset controller"
++	depends on ARCH_PENSANDO_SALINA_SOC || COMPILE_TEST
++	help
++	  This option enables support for the external reset functions
++	  on the Pensando Salina System Resource Chip.  Reset control
++	  of peripherals is accessed over IPC to management processor.
++
++	  The management processor is an ARM64 A35 in the Salina SoC.
++
+ config RESET_SCMI
+ 	tristate "Reset driver controlled via ARM SCMI interface"
+ 	depends on ARM_SCMI_PROTOCOL || COMPILE_TEST
+diff --git a/drivers/reset/Makefile b/drivers/reset/Makefile
+index 351560b15246..bb1ee14f63de 100644
+--- a/drivers/reset/Makefile
++++ b/drivers/reset/Makefile
+@@ -27,6 +27,7 @@ obj-$(CONFIG_RESET_QCOM_AOSS) += reset-qcom-aoss.o
+ obj-$(CONFIG_RESET_QCOM_PDC) += reset-qcom-pdc.o
+ obj-$(CONFIG_RESET_RASPBERRYPI) += reset-raspberrypi.o
+ obj-$(CONFIG_RESET_RZG2L_USBPHY_CTRL) += reset-rzg2l-usbphy-ctrl.o
++obj-$(CONFIG_RESET_SALINASR) += reset-salinasr.o
+ obj-$(CONFIG_RESET_SCMI) += reset-scmi.o
+ obj-$(CONFIG_RESET_SIMPLE) += reset-simple.o
+ obj-$(CONFIG_RESET_SOCFPGA) += reset-socfpga.o
+diff --git a/drivers/reset/reset-salinasr.c b/drivers/reset/reset-salinasr.c
+new file mode 100644
+index 000000000000..54044f8d96ee
+--- /dev/null
++++ b/drivers/reset/reset-salinasr.c
+@@ -0,0 +1,151 @@
++// SPDX-License-Identifier: (GPL-2.0+ OR MIT)
++/*
++ * Copyright (c) 2025 Advanced Micro Devices, Inc.
++ */
++
++#include <linux/module.h>
++#include <linux/miscdevice.h>
++#include <linux/of.h>
++#include <linux/platform_device.h>
++#include <linux/poll.h>
++#include <linux/reset-controller.h>
++#include <linux/wait.h>
++
++#define SALINA_RESET_NOTIFY_DEV "sdhci_notify"
++#define RESET_MSG "reset_triggered\n"
++#define RESET_MSG_LEN 16
++
++struct salina_reset_priv {
++	struct reset_controller_dev rcdev;
++	struct device *dev;
++};
++
++static DECLARE_WAIT_QUEUE_HEAD(salina_reset_wait);
++static int reset_triggered;
++
++static ssize_t salina_reset_read(struct file *file, char __user *buf,
++				 size_t count, loff_t *ppos)
++{
++	if (wait_event_interruptible(salina_reset_wait, reset_triggered != 0))
++		return -ERESTARTSYS;
++
++	/* Only one read per event */
++	if (*ppos > 0)
++		return 0;
++
++	if (count < RESET_MSG_LEN)
++		return -EINVAL;
++
++	/* Notify userspace */
++	if (copy_to_user(buf, RESET_MSG, RESET_MSG_LEN))
++		return -EFAULT;
++
++	*ppos += RESET_MSG_LEN;
++	reset_triggered = 0;
++	return RESET_MSG_LEN;
++}
++
++static unsigned int salina_reset_poll(struct file *file, poll_table *wait)
++{
++	poll_wait(file, &salina_reset_wait, wait);
++	return reset_triggered ? POLLIN | POLLRDNORM : 0;
++}
++
++static const struct file_operations salina_reset_fops = {
++	.owner = THIS_MODULE,
++	.read = salina_reset_read,
++	.poll = salina_reset_poll,
++};
++
++static struct miscdevice salina_reset_misc = {
++	.minor = MISC_DYNAMIC_MINOR,
++	.name = SALINA_RESET_NOTIFY_DEV,
++	.fops = &salina_reset_fops,
++};
++
++/* Reset controller ops */
++static int salina_reset_assert(struct reset_controller_dev *rcdev,
++			       unsigned long id)
++{
++	struct salina_reset_priv *priv = container_of(rcdev, struct salina_reset_priv, rcdev);
++	static int init;
++
++	/* Kernel init does emmc reset if there is a reset driver and
++	 * the eMMC responds to hwreset.  The CPLD does an eMMC hwreset
++	 * during reboot and the userspace program is started after the
++	 * kernel is booted.  No need to request the first hwreset.
++	 */
++	if (!init) {
++		init = 1;
++		return 0;
++	}
++
++	dev_info(priv->dev, "emmc reset requested\n");
++	reset_triggered = 1;
++	wake_up_interruptible(&salina_reset_wait);
++	return 0;
++}
++
++static int salina_reset_deassert(struct reset_controller_dev *rcdev,
++				 unsigned long id)
++{
++	return 0;
++}
++
++static const struct reset_control_ops salina_reset_ops = {
++	.assert = salina_reset_assert,
++	.deassert = salina_reset_deassert,
++};
++
++static int salina_reset_probe(struct platform_device *pdev)
++{
++	struct salina_reset_priv *priv;
++	int ret;
++
++	priv = devm_kzalloc(&pdev->dev, sizeof(*priv), GFP_KERNEL);
++	if (!priv)
++		return -ENOMEM;
++
++	priv->dev = &pdev->dev;
++	priv->rcdev.owner = THIS_MODULE;
++	priv->rcdev.nr_resets = 1;
++	priv->rcdev.ops = &salina_reset_ops;
++	priv->rcdev.of_node = pdev->dev.of_node;
++
++	ret = devm_reset_controller_register(&pdev->dev, &priv->rcdev);
++	if (ret) {
++		dev_err(&pdev->dev, "Failed to register reset controller: %d\n", ret);
++		return ret;
++	}
++
++	ret = misc_register(&salina_reset_misc);
++	if (ret) {
++		dev_err(&pdev->dev, "Failed to register misc device %s: %d\n",
++			SALINA_RESET_NOTIFY_DEV, ret);
++		return ret;
++	}
++
++	return 0;
++}
++
++static int salina_reset_remove(struct platform_device *pdev)
++{
++	misc_deregister(&salina_reset_misc);
++	return 0;
++}
++
++static const struct of_device_id salina_reset_dt_match[] = {
++	{ .compatible = "amd,pensando-salinasr-reset" },
++	{ /* sentinel */ },
++};
++MODULE_DEVICE_TABLE(of, salina_reset_of_match);
++
++static struct platform_driver salina_reset_driver = {
++	.probe = salina_reset_probe,
++	.remove = salina_reset_remove,
++	.driver = {
++		.name = "salina-reset",
++		.of_match_table = salina_reset_dt_match,
++	},
++};
++builtin_platform_driver(salina_reset_driver);
+-- 
+2.25.1
+

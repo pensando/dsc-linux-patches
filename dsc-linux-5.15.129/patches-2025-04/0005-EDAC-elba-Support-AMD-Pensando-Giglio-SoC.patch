@@ -1,0 +1,104 @@
+From 14d636eba8525907c773e098b612cbf4103154d0 Mon Sep 17 00:00:00 2001
+From: Brad Larson <bradley.larson@amd.com>
+Date: Sat, 5 Apr 2025 11:50:54 -0700
+Subject: [PATCH 5/8] EDAC/elba: Support AMD Pensando Giglio SoC
+
+Update supports Elba and Giglio SoCs
+
+Signed-off-by: Brad Larson <bradley.larson@amd.com>
+---
+ drivers/edac/Kconfig     |  2 +-
+ drivers/edac/elba_edac.c | 23 +++++++++++++++++------
+ 2 files changed, 18 insertions(+), 7 deletions(-)
+
+diff --git a/drivers/edac/Kconfig b/drivers/edac/Kconfig
+index 5df543662b95..caed714af6f0 100644
+--- a/drivers/edac/Kconfig
++++ b/drivers/edac/Kconfig
+@@ -541,7 +541,7 @@ config EDAC_DMC520
+ 
+ config EDAC_ELBA
+ 	tristate "Pensando Elba Memory ECC"
+-	depends on ARCH_PENSANDO_ELBA_SOC
++	depends on ARCH_PENSANDO_ELBA_SOC || ARCH_PENSANDO_GIGLIO_SOC
+ 	help
+ 	  Support for error detection and correction on the
+ 	  Pensando Elba SoC.
+diff --git a/drivers/edac/elba_edac.c b/drivers/edac/elba_edac.c
+index c05d1557834b..b0e91cd261e6 100644
+--- a/drivers/edac/elba_edac.c
++++ b/drivers/edac/elba_edac.c
+@@ -1,16 +1,16 @@
+ // SPDX-License-Identifier: GPL-2.0
+ /*
+- * AMD Pensando Elba Memory Controller EDAC Driver
++ * AMD Pensando Elba/Giglio Memory Controller EDAC Driver
+  *
+  * Copyright (c) 2022, Advanced Micro Devices Inc.
+  */
+ 
+ #include <linux/edac.h>
+ #include <linux/platform_device.h>
+-#include <linux/panic_notifier.h>
+ #include <linux/notifier.h>
+ #include <linux/of.h>
+ #include <linux/of_device.h>
++#include <linux/panic_notifier.h>
+ #include "edac_module.h"
+ 
+ #define ELB_MC_CHAN_STRIDE		0x80000
+@@ -86,6 +86,16 @@ static const struct mc_edac_regs elba_mc_edac_regs = {
+ 	.int_ack_ecc = 384,
+ };
+ 
++static const struct mc_edac_regs giglio_mc_edac_regs = {
++	.ecc_u_addr = 282,
++	.ecc_u_synd = 283,
++	.ecc_c_addr = 286,
++	.ecc_c_synd = 287,
++	.ecc_id = 290,
++	.int_stat_ecc = 399,
++	.int_ack_ecc = 408,
++};
++
+ static inline u32 elba_mc_read(struct elba_mcdata *mcp, int chan, int subchan,
+ 				int offs)
+ {
+@@ -326,7 +336,7 @@ static int elba_edac_mc_panic_notifier(struct notifier_block *nb,
+ 			if (elba_edac_mc_u_poll(mcp, chan, subchan, int_stat,
+ 						&res)) {
+ 				if (mcp->is_ddr5)
+-					pr_crit("EDAC MC0: %u UE %s "
++					pr_crit(KERN_CRIT "EDAC MC0: %u UE %s "
+ 						"on unknown memory (channel:%u "
+ 						"slot:%u page:0x%llx "
+ 						"offset:0x%llx "
+@@ -337,7 +347,7 @@ static int elba_edac_mc_panic_notifier(struct notifier_block *nb,
+ 						res.bus_addr & ~PAGE_MASK,
+ 						res.synd);
+ 				else
+-					pr_crit("EDAC MC0: %u UE %s "
++					pr_crit(KERN_CRIT "EDAC MC0: %u UE %s "
+ 						"on unknown memory (channel:%u "
+ 						"page:0x%llx "
+ 						"offset:0x%llx "
+@@ -544,6 +554,7 @@ static int elba_edac_mc_remove(struct platform_device *pdev)
+ 
+ static const struct of_device_id elba_edac_mc_of_match[] = {
+ 	{ .compatible = "pensando,elba-edac-mc", .data = &elba_mc_edac_regs },
++	{ .compatible = "pensando,giglio-edac-mc", .data = &giglio_mc_edac_regs },
+ 	{ },
+ };
+ 
+@@ -557,6 +568,6 @@ static struct platform_driver elba_edac_mc_driver = {
+ };
+ module_platform_driver(elba_edac_mc_driver);
+ 
+-MODULE_DESCRIPTION("AMD Pensando Elba platform EDAC memory controller driver");
++MODULE_DESCRIPTION("AMD Pensando Elba/Giglio platform EDAC memory controller driver");
+ MODULE_AUTHOR("Advanced Micro Devices, Inc.");
+-MODULE_LICENSE("GPL v2");
++MODULE_LICENSE("GPL");
+-- 
+2.25.1
+
