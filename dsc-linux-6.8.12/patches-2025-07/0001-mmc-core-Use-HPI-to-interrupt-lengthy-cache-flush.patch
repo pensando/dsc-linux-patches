@@ -1,0 +1,92 @@
+From 9009ef99e2ce6ef37732215d06f00734ed1b7364 Mon Sep 17 00:00:00 2001
+From: Brad Larson <Bradley.Larson@amd.com>
+Date: Tue, 15 Apr 2025 09:38:51 -0700
+Subject: [PATCH 4/5] mmc: core: Use HPI to interrupt lengthy cache flush
+ (#495)
+
+There is no cache flush duration time limit per JEDEC
+and the default timeout is 30 seconds with no retry.
+When this timeout occurs a filesystem partition may
+go read only.
+
+JEDEC compliant devices support HPI to interrupt the
+cache flush.  Support HPI interrupt of lengthy cache
+flush to allow normal IO and then when the next periodic
+cache flush is issued the cache flush continues.
+
+Signed-off-by: Brad Larson <bradley.larson@amd.com>
+---
+ drivers/mmc/core/mmc_ops.c | 31 ++++++++++++++++++++++++++++++-
+ 1 file changed, 30 insertions(+), 1 deletion(-)
+
+diff --git a/drivers/mmc/core/mmc_ops.c b/drivers/mmc/core/mmc_ops.c
+index 3b3adbddf664..23e5ebd63ce6 100644
+--- a/drivers/mmc/core/mmc_ops.c
++++ b/drivers/mmc/core/mmc_ops.c
+@@ -23,6 +23,7 @@
+ #define MMC_SANITIZE_TIMEOUT_MS		(240 * 1000) /* 240s */
+ #define MMC_OP_COND_PERIOD_US		(4 * 1000) /* 4ms */
+ #define MMC_OP_COND_TIMEOUT_MS		1000 /* 1s */
++#define MMC_CACHE_FLUSH_INTERRUPT_MS	(3 * 1000) /* 3s */
+ 
+ static const u8 tuning_blk_pattern_4bit[] = {
+ 	0xff, 0x0f, 0xff, 0x00, 0xff, 0xcc, 0xc3, 0xcc,
+@@ -66,6 +67,8 @@ struct mmc_op_cond_busy_data {
+ 	struct mmc_command *cmd;
+ };
+ 
++static int mmc_send_hpi_cmd(struct mmc_card *card);
++
+ int __mmc_send_status(struct mmc_card *card, u32 *status, unsigned int retries)
+ {
+ 	int err;
+@@ -505,12 +508,24 @@ int __mmc_poll_for_busy(struct mmc_host *host, unsigned int period_us,
+ 			void *cb_data)
+ {
+ 	int err;
+-	unsigned long timeout;
++	unsigned long timeout, timeout_hpi;
+ 	unsigned int udelay = period_us ? period_us : 32, udelay_max = 32768;
++	struct mmc_busy_data *data = cb_data;
++	struct mmc_card *card = data->card;
++	bool hpi_expired = false;
++	bool hpi_sent = false;
+ 	bool expired = false;
+ 	bool busy = false;
+ 
+ 	timeout = jiffies + msecs_to_jiffies(timeout_ms) + 1;
++
++	/*
++	 * Cache flush is periodically sent (~5-7 secconds).  Interrupt a lengthy
++	 * cache flush to allow timely normal IO and continue the flush when the
++	 * next cache flush command is sent.
++	 */
++	timeout_hpi = jiffies + msecs_to_jiffies(MMC_CACHE_FLUSH_INTERRUPT_MS) + 1;
++
+ 	do {
+ 		/*
+ 		 * Due to the possibility of being preempted while polling,
+@@ -522,6 +537,20 @@ int __mmc_poll_for_busy(struct mmc_host *host, unsigned int period_us,
+ 		if (err)
+ 			return err;
+ 
++		hpi_expired = time_after(jiffies, timeout_hpi);
++		if (!hpi_sent && card->ext_csd.hpi_en && hpi_expired && busy &&
++		    data->busy_cmd == MMC_BUSY_CMD6) {
++			err = mmc_send_hpi_cmd(card);
++			if (err) {
++				pr_err("%s: HPI to interrupt cache flush failed %d\n",
++				       mmc_hostname(host), err);
++			} else {
++				pr_info("%s: HPI sent to interrupt cache flush\n",
++					mmc_hostname(host));
++				hpi_sent = true;
++			}
++		}
++
+ 		/* Timeout if the device still remains busy. */
+ 		if (expired && busy) {
+ 			pr_err("%s: Card stuck being busy! %s\n",
+-- 
+2.25.1
+
