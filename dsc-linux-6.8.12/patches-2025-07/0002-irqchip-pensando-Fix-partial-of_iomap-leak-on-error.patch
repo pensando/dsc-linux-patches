@@ -1,0 +1,59 @@
+From d1b1fa5ad3076a4602e801160f78fe7eb72602ed Mon Sep 17 00:00:00 2001
+From: Brad Larson <Bradley.Larson@amd.com>
+Date: Wed, 30 Jul 2025 09:59:44 -0700
+Subject: [PATCH] irqchip/pensando: Fix partial of_iomap() leak on error (#505)
+
+If of_iomap() fails partway through mapping multiple regions,
+the previously mapped regions were not being unmapped, leading
+to a memory/resource leak.
+
+Signed-off-by: Brad Larson <bradley.larson@amd.com>
+---
+ drivers/irqchip/irq-pensando.c | 18 ++++++++++++++++--
+ 1 file changed, 16 insertions(+), 2 deletions(-)
+
+diff --git a/drivers/irqchip/irq-pensando.c b/drivers/irqchip/irq-pensando.c
+index 265d02f765ef..61636b5aed0e 100644
+--- a/drivers/irqchip/irq-pensando.c
++++ b/drivers/irqchip/irq-pensando.c
+@@ -682,12 +682,27 @@ static int __init pen_ictlr_iomap_csrintr(struct device_node *dn,
+ 
+ 	if (i != info->num_bases) {
+ 		pr_err("only mapped %u of %u regions\n", i, info->num_bases);
++		for (; i > 0; i--)
++			iounmap(info->map_base[i - 1]);
+ 		return -ENOMEM;
+ 	}
+ 
+ 	return 0;
+ }
+ 
++/*
++ * Unmap all mapped regions in info->map_base[]
++ */
++static void pen_ictlr_unmap_all(struct pen_ictlr_info *info)
++{
++	unsigned int i;
++
++	for (i = info->num_bases; i > 0; i--) {
++		if (info->map_base[i - 1])
++			iounmap(info->map_base[i - 1]);
++	}
++}
++
+ static struct pen_ictlr_info *__init pen_ictlr_probe(struct device_node *dn,
+ 	 struct device_node *parent, enum reg_type reg_type,
+ 	 int (*of_iomap_fn)(struct device_node *, struct pen_ictlr_info *),
+@@ -759,8 +774,7 @@ static struct pen_ictlr_info *__init pen_ictlr_probe(struct device_node *dn,
+ 	return info;
+ 
+ out_unmap_regs:
+-	if (info->map_base)
+-		iounmap(info->map_base);
++	pen_ictlr_unmap_all(info);
+ 
+ out_free_info:
+ 	kfree(info);
+-- 
+2.25.1
+
