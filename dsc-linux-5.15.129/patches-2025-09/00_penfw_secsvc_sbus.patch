@@ -1,0 +1,559 @@
+From 2349af9f9109dd75bfc916ffe56a7f2d9b7cdad0 Mon Sep 17 00:00:00 2001
+From: rahshekh <rahulshekhar@pensando.io>
+Date: Tue, 23 Sep 2025 21:29:04 -0700
+Subject: [PATCH] Add changes for penfw and sbus.c for secureboot
+
+Signed-off-by: rahshekh <rahulshekhar@pensando.io>
+---
+ drivers/soc/pensando/penfw.h       |  19 ++++
+ drivers/soc/pensando/penfw_drv.c   |  97 +++++++++++++++----
+ drivers/soc/pensando/penfw_smc.c   |  88 +++++++++++++++++
+ drivers/soc/pensando/penfw_sysfs.c |   2 -
+ drivers/soc/pensando/sbus.c        | 145 ++++++++++++++++++++++++++---
+ 5 files changed, 320 insertions(+), 31 deletions(-)
+
+diff --git a/drivers/soc/pensando/penfw.h b/drivers/soc/pensando/penfw.h
+index fb6cfb772b7e..2a5ca28c06bf 100644
+--- a/drivers/soc/pensando/penfw.h
++++ b/drivers/soc/pensando/penfw.h
+@@ -23,6 +23,14 @@ enum penfw_opcodes {
+ 	PENFW_OP_GET_RANDOM,
+ 	PENFW_OP_GET_CHIP_CERT,
+ 	PENFW_OP_ATTEST_GET_TIME,
++	PENFW_OP_GET_PENTRUST_AR_NVCNTR,
++	PENFW_OP_COMMIT_PENTRUST_AR_NVCNTR,
++	PENFW_OP_GET_HMAC,
++	PENFW_OP_GET_SM_LOG,
++	PENFW_OP_BSM_SET_RUNNING,
++	PENFW_OP_GET_MMA_CLK,
++	PENFW_OP_SET_ETH_PLL_CLK,
++	PENFW_OP_ATOMIC_INC_AXI_LIMITER,
+ 	PENFW_OPCODE_MAX,
+ };
+ 
+@@ -50,10 +58,21 @@ struct penfw_time_attestation {
+ 	} signature;
+ };
+ 
++typedef struct penfw_svc_args_s {
++	uint64_t func_id;
++	uint64_t sub_func_id;
++	uint16_t length_in;
++	uint64_t value;		// pointer to input/output data
++	uint16_t length_out;
++	uint64_t status;	// status of the smc operation
++} penfw_svc_args_t;
+ 
+ #define PENFW_IOCTL_NUM  0xcd
+ #define PENFW_FWCALL     _IOWR(PENFW_IOCTL_NUM, 1, struct penfw_call_args)
++#define PENFW_SVC        _IOWR(PENFW_IOCTL_NUM, 2, penfw_svc_args_t)
+ 
++int is_user_address_valid(pid_t pid, unsigned long addr);
+ void penfw_smc(struct penfw_call_args *args);
++long penfw_svc_smc(struct device *penfw_dev, pid_t pid, penfw_svc_args_t *args);
+ 
+ #endif /* __PENFW_H__ */
+diff --git a/drivers/soc/pensando/penfw_drv.c b/drivers/soc/pensando/penfw_drv.c
+index 8e13acf48dac..1fa5f6acd9d2 100644
+--- a/drivers/soc/pensando/penfw_drv.c
++++ b/drivers/soc/pensando/penfw_drv.c
+@@ -10,7 +10,9 @@
+ #include <linux/fs.h>
+ #include <linux/uaccess.h>
+ #include <linux/types.h>
++#include <linux/mm.h>
+ #include <linux/mutex.h>
++#include <linux/sched/mm.h>
+ #include <linux/platform_device.h>
+ #include <linux/of.h>
+ #include <linux/arm-smccc.h>
+@@ -34,38 +36,99 @@ static int penfw_open(struct inode *inodep, struct file *filep)
+ 	return 0;
+ }
+ 
++// Checks if the address is mapped to the process's address space
++int is_user_address_valid(pid_t pid, unsigned long addr)
++{
++	struct task_struct *task;
++	struct mm_struct *mm;
++	struct vm_area_struct *vma;
++	int ret = -1;
++
++	task = pid_task(find_vpid(pid), PIDTYPE_PID);
++	if (!task) {
++	    pr_err("smc_drv : unable to find task for pid %u", (uint32_t)pid);
++	    return -ESRCH;
++	}
++	mm = get_task_mm(task);
++	if (!mm) {
++	    pr_err("smc_drv : unable to get mm for task with pid %u", (uint32_t)pid);
++	    return -ESRCH;
++	}
++
++	down_read(&mm->mmap_lock);
++	vma = find_vma(mm, addr);
++	// The address is valid and mapped in this VMA
++	if (vma)
++	    ret = 0;
++	up_read(&mm->mmap_lock);
++	mmput(mm);
++
++	return ret;
++}
++
+ static long penfw_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
+ {
+ 	long ret = 0;
+ 	void __user *argp = (void __user *)arg;
+ 	struct penfw_call_args penfw_args_ob;
++	penfw_svc_args_t penfw_svc_args;
++	pid_t pid;
+ 
+-	mutex_lock(&penfw_mutex);
+ 
+-	if (copy_from_user(&penfw_args_ob, argp, sizeof(penfw_args_ob))) {
+-		dev_err(penfw_dev, "copy from user failed\n");
++	pid = task_pid_nr(current);
++	if (is_user_address_valid(pid, (unsigned long)argp) != 0) {
++		dev_err(penfw_dev, "user address %lx is not mapped to pid %u\n",
++			(unsigned long)argp, pid);
+ 		ret = -EFAULT;
+ 		goto err;
+ 	}
+ 
+-	if (cmd != PENFW_FWCALL) {
++	switch (cmd) {
++	case PENFW_FWCALL:
++		if (copy_from_user(&penfw_args_ob, argp,
++					sizeof(penfw_args_ob))) {
++			dev_err(penfw_dev, "copy from user failed\n");
++			ret = -EFAULT;
++			goto err;
++		}
++		mutex_lock(&penfw_mutex);
++		penfw_smc(&penfw_args_ob);
++		mutex_unlock(&penfw_mutex);
++		// copy back data to user space struct
++		if (copy_to_user(argp, &penfw_args_ob, sizeof(penfw_args_ob))) {
++			dev_err(penfw_dev, "copy to user failed\n");
++			ret = -EFAULT;
++			goto err;
++		}
++		break;
++	case PENFW_SVC:
++		if (copy_from_user(&penfw_svc_args, argp,
++					sizeof(penfw_svc_args))) {
++			dev_err(penfw_dev, "copy from user failed\n");
++			ret = -EFAULT;
++			goto err;
++		}
++		ret = penfw_svc_smc(penfw_dev, pid, &penfw_svc_args);
++		if (ret != 0) {
++			dev_err(penfw_dev, "error in smc handling %ld\n",
++				ret);
++			goto err;
++		}
++		// copy back data to user space struct
++		if (copy_to_user(argp, &penfw_svc_args,
++					sizeof(penfw_svc_args))) {
++			dev_err(penfw_dev, "copy to user failed\n");
++			ret = -EFAULT;
++			goto err;
++		}
++		break;
++	default:
+ 		dev_err(penfw_dev, "received unsupported ioctl %u\n", cmd);
+ 		ret = -EOPNOTSUPP;
+ 		goto err;
+ 	}
+ 
+-	penfw_smc(&penfw_args_ob);
+-
+-	// copy back data to user space struct
+-	if (copy_to_user(argp, &penfw_args_ob, sizeof(penfw_args_ob))) {
+-		dev_err(penfw_dev, "copy to user failed\n");
+-		ret = -EFAULT;
+-		goto err;
+-	}
+-
+ err:
+-	mutex_unlock(&penfw_mutex);
+-
+ 	return ret;
+ }
+ 
+@@ -116,8 +179,8 @@ static int penfw_probe(struct platform_device *pdev)
+ 	dev_info(penfw_dev, "penfw sys initialization success\n");
+ 
+ 	// Allocate memory for smc calls
+-	penfwdata = (struct penfw_data *)devm_get_free_pages(penfw_dev,
+-									GFP_KERNEL | GFP_ATOMIC, 0);
++	penfwdata = (void *)devm_get_free_pages(penfw_dev,
++						GFP_KERNEL | GFP_ATOMIC, 0);
+ 	if (penfwdata == NULL) {
+ 		dev_err(penfw_dev, "penfw memory allocation failed\n");
+ 		return -1;
+diff --git a/drivers/soc/pensando/penfw_smc.c b/drivers/soc/pensando/penfw_smc.c
+index b923b285f3bb..0013f92630cb 100644
+--- a/drivers/soc/pensando/penfw_smc.c
++++ b/drivers/soc/pensando/penfw_smc.c
+@@ -3,6 +3,7 @@
+  * Copyright (c) 2021, Pensando Systems Inc.
+  */
+ 
++#include <linux/device.h>
+ #include <linux/string.h>
+ #include <linux/arm-smccc.h>
+ #include <linux/printk.h>
+@@ -53,6 +54,12 @@ static const char *_opcode_to_str(uint8_t opcode)
+ 		return "PENFW_OP_GET_CHIP_CERT";
+ 	case PENFW_OP_ATTEST_GET_TIME:
+ 		return "PENFW_OP_ATTEST_GET_TIME";
++	case PENFW_OP_GET_MMA_CLK:
++		return "PENFW_OP_GET_MMA_CLK";
++	case PENFW_OP_SET_ETH_PLL_CLK:
++		return "PENFW_OP_SET_ETH_PLL_CLK";
++	case PENFW_OP_ATOMIC_INC_AXI_LIMITER:
++		return "PENFW_OP_ATOMIC_INC_AXI_LIMITER";
+ 	default:
+ 		return "PENFW_OP_UNKNOWN";
+ 	}
+@@ -188,6 +195,9 @@ void penfw_smc(struct penfw_call_args *args)
+ 	case PENFW_OP_GET_PENTRUST_VERSION:
+ 	case PENFW_OP_GET_SERIAL_NUMBER:
+ 	case PENFW_OP_GET_RANDOM:
++	case PENFW_OP_GET_MMA_CLK:
++	case PENFW_OP_SET_ETH_PLL_CLK:
++	case PENFW_OP_ATOMIC_INC_AXI_LIMITER:
+ 		arm_smccc_smc(PENFW_CALL_FID, args->a1, args->a2, args->a3, 0, 0,
+ 						0, 0, &res);
+ 		// copy return vals
+@@ -210,3 +220,81 @@ void penfw_smc(struct penfw_call_args *args)
+ 		 "a2: 0x%llx a3: 0x%llx\n", args->a0, args->a1,
+ 		 args->a2, args->a3);
+ }
++
++long penfw_svc_smc(struct device *penfw_dev, pid_t pid, penfw_svc_args_t *args)
++{
++	struct arm_smccc_res res = { 0 };
++	void *cfg = NULL;
++	void *cfg_out = NULL;
++	phys_addr_t cfg_phys = 0;
++	phys_addr_t cfg_phys_out = 0;
++	long ret = 0;
++
++	if (args->length_in != 0) {
++		if (is_user_address_valid(pid, args->value) != 0) {
++			dev_err(penfw_dev, "User address %llx for smc cmd"
++				"(%llx/%llx) is not mapped to process with pid %u\n",
++				args->value, args->func_id,
++				args->sub_func_id, pid);
++			ret = -EFAULT;
++			goto err;
++		}
++		cfg = (void *)__get_free_pages((GFP_KERNEL | GFP_ATOMIC | __GFP_ZERO),
++						get_order(args->length_in));
++		if (cfg == NULL) {
++			dev_err(penfw_dev, "penfw svc memory allocation failed\n");
++			ret = -ENOMEM;
++			goto err;
++		}
++		cfg_phys = virt_to_phys(cfg);
++		if (copy_from_user(cfg, (void __user *)args->value,
++					args->length_in)) {
++			dev_err(penfw_dev, "Unable to copy argument %llx "
++				"from user for smc cmd(%llx/%llx)\n", args->value,
++				args->func_id, args->sub_func_id);
++			ret = -EFAULT;
++			goto err;
++		}
++	}
++	if (args->length_out != 0) {
++		cfg_out = (void *)__get_free_pages((GFP_KERNEL | GFP_ATOMIC | __GFP_ZERO),
++						get_order(args->length_out));
++		if (cfg_out == NULL) {
++			dev_err(penfw_dev,
++				"penfw svc out memory allocation failed\n");
++			ret = -ENOMEM;
++			goto err;
++		}
++		cfg_phys_out = virt_to_phys(cfg_out);
++	}
++	arm_smccc_smc(args->func_id, args->sub_func_id, cfg_phys,
++			cfg_phys_out, 0, 0, 0, 0, &res);
++	// copy back to user only if SMC operation is successful
++	if ((res.a0 == 0) && args->length_out) {
++		if (res.a1 <= args->length_out) {
++			if (copy_to_user((void __user *)args->value, cfg_out,
++						res.a1)) {
++				dev_err(penfw_dev, "copy to user failed\n");
++				ret = -EFAULT;
++				goto err;
++			}
++		} else {
++			dev_err(penfw_dev,
++				"penfw svc out memory allocation not enough\n");
++			ret = -EINVAL;
++			goto err;
++		}
++		args->length_out = res.a1;
++	}
++	args->status = res.a0;
++
++err:
++	if (cfg_out) {
++		free_pages((unsigned long)cfg_out, get_order(args->length_out));
++	}
++	if (cfg) {
++		free_pages((unsigned long)cfg, get_order(args->length_in));
++	}
++
++	return ret;
++}
+diff --git a/drivers/soc/pensando/penfw_sysfs.c b/drivers/soc/pensando/penfw_sysfs.c
+index 1e333240ad12..48bcfb236c23 100644
+--- a/drivers/soc/pensando/penfw_sysfs.c
++++ b/drivers/soc/pensando/penfw_sysfs.c
+@@ -8,8 +8,6 @@
+ #include <linux/fs.h>
+ #include <linux/types.h>
+ #include <linux/device.h>
+-#include <linux/device.h>
+-#include <linux/types.h>
+ #include <linux/string.h>
+ #include <linux/module.h>
+ 
+diff --git a/drivers/soc/pensando/sbus.c b/drivers/soc/pensando/sbus.c
+index c97ba84db12b..610258bfdf1a 100644
+--- a/drivers/soc/pensando/sbus.c
++++ b/drivers/soc/pensando/sbus.c
+@@ -19,6 +19,8 @@
+ #include <linux/of_platform.h>
+ #include <linux/platform_device.h>
+ #include <linux/delay.h>
++#include <linux/arm-smccc.h>
++#include <asm/ptrace.h>
+ 
+ #define MAX_DEVICES			4
+ #define SBUS_SBUS_RST			0x20
+@@ -27,6 +29,20 @@
+ #define SBUS_INDIR_DATA_ADDR_LSB	8
+ #define SBUS_INDIR_DATA_COMMAND_LSB	16
+ 
++/* Refer Pensando BL31 Function Registry.docx */
++#define PEN_SBUS_SMC_CALL_FID       0xC200000B
++
++enum pen_sbus_smc_sub_fid {
++    PEN_SBUS_SMC_REG_READ = 0,
++    PEN_SBUS_SMC_REG_WRITE = 1,
++};
++
++enum pen_sbus_smc_err_codes {
++    PEN_SBUS_SMC_ERR_NONE = 0,
++    PEN_SBUS_SMC_ERR_INVALID = -1,
++    PEN_SBUS_SMC_ERR_UNSUPPORTED = -2,
++};
++
+ static dev_t sbus_dev;
+ static struct class *dev_class;
+ static int dev_inst;
+@@ -37,12 +53,18 @@ struct sbus_ioctl_args {
+ 	u32 sbus_data;
+ };
+ 
++struct sbus_reg_ops {
++	void (*write)(void *addr, uint32_t val);
++	uint32_t (*read)(void *addr);
++};
++
+ struct sbusdev_info {
+ 	struct platform_device *pdev;
+-	void __iomem *sbus_indir;
+-	void __iomem *sbus_dhs;
++	void *sbus_indir;
++	void *sbus_dhs;
+ 	spinlock_t sbus_lock;
+ 	struct cdev cdev;
++	struct sbus_reg_ops *rops;
+ };
+ 
+ #define SBUS_WRITE	_IOW('a', 'a', struct sbus_ioctl_args)
+@@ -59,6 +81,57 @@ static int sbus_drv_open(struct inode *inode, struct file *file)
+ 	return 0;
+ }
+ 
++static void reg_write(void *a, uint32_t val)
++{
++	void __iomem *addr = (void __iomem *)a;
++	iowrite32(val, addr);
++}
++
++static uint32_t reg_read(void *a)
++{
++	void __iomem *addr = (void __iomem *)a;
++	return ioread32(addr);
++}
++
++static void reg_smc_write(void *addr, uint32_t val)
++{
++	struct arm_smccc_res res = {0};
++	struct pt_regs args = {0};
++
++	args.regs[0] = PEN_SBUS_SMC_CALL_FID;
++	args.regs[1] = PEN_SBUS_SMC_REG_WRITE;
++	args.regs[2] = (uint64_t)addr;
++	args.regs[3] = val;
++
++	arm_smccc_smc(args.regs[0], args.regs[1], args.regs[2], args.regs[3], 0, 0,
++				  0, 0, &res);
++
++	if (res.a0 != PEN_SBUS_SMC_ERR_NONE) {
++		pr_err("pensando-sbus: failed to write data! ret=%d\n", (int)res.a0);
++	}
++}
++
++static uint32_t reg_smc_read(void *addr)
++{
++	struct arm_smccc_res res = {0};
++	struct pt_regs args = {0};
++
++	args.regs[0] = PEN_SBUS_SMC_CALL_FID;
++	args.regs[1] = PEN_SBUS_SMC_REG_READ;
++	args.regs[2] = (uint64_t)addr;
++
++	arm_smccc_smc(args.regs[0], args.regs[1], args.regs[2], 0, 0, 0,
++				  0, 0, &res);
++
++	if (res.a0 != PEN_SBUS_SMC_ERR_NONE) {
++		pr_err("pensando-sbus: read failed! ret=%d\n", res.a0);
++		return (uint32_t)-1;
++	}
++
++	/* result passed back in a1 reg */
++	return (uint32_t)res.a1;
++}
++
+ static void sbus_write(struct sbus_ioctl_args param,
+ 		       struct sbusdev_info *sbus_ring)
+ {
+@@ -73,8 +146,8 @@ static void sbus_write(struct sbus_ioctl_args param,
+ 
+ 	spin_lock(&sbus_ring->sbus_lock);
+ 
+-	iowrite32(sbus_val, sbus_ring->sbus_indir);
+-	iowrite32(param.sbus_data, sbus_ring->sbus_dhs);
++	sbus_ring->rops->write(sbus_ring->sbus_indir, sbus_val);
++	sbus_ring->rops->write(sbus_ring->sbus_dhs, param.sbus_data);
+ 
+ 	spin_unlock(&sbus_ring->sbus_lock);
+ }
+@@ -93,8 +166,8 @@ static uint32_t sbus_read(struct sbus_ioctl_args param,
+ 
+ 	spin_lock(&sbus_ring->sbus_lock);
+ 
+-	iowrite32(sbus_val, sbus_ring->sbus_indir);
+-	val = ioread32(sbus_ring->sbus_dhs);
++	sbus_ring->rops->write(sbus_ring->sbus_indir, sbus_val);
++	val = sbus_ring->rops->read(sbus_ring->sbus_dhs);
+ 
+ 	spin_unlock(&sbus_ring->sbus_lock);
+ 
+@@ -115,8 +188,8 @@ static void sbus_reset(struct sbus_ioctl_args param,
+ 
+ 	spin_lock(&sbus_ring->sbus_lock);
+ 
+-	iowrite32(sbus_val, sbus_ring->sbus_indir);
+-	iowrite32(0, sbus_ring->sbus_dhs);
++	sbus_ring->rops->write(sbus_ring->sbus_indir, sbus_val);
++	sbus_ring->rops->write(sbus_ring->sbus_dhs, 0);
+ 
+ 	spin_unlock(&sbus_ring->sbus_lock);
+ }
+@@ -176,6 +249,39 @@ static const struct file_operations fops = {
+ 	.unlocked_ioctl = sbus_drv_ioctl,
+ };
+ 
++/*
++ * Register operation structure (non-secure)
++ */
++static struct sbus_reg_ops ns_rops = {
++	.read = reg_read,
++	.write = reg_write,
++};
++
++/*
++ * Register operation structure (secure)
++ */
++static struct sbus_reg_ops sec_rops = {
++	.read = reg_smc_read,
++	.write = reg_smc_write,
++};
++
++static int of_get_secure_mode(void)
++{
++	struct device_node *of_secure_mode;
++	int enable = 0;
++
++	/* Get secure mode from OF */
++	of_secure_mode = of_find_node_by_path("/secure_mode");
++	if (of_secure_mode) {
++		if (of_property_read_u32(of_secure_mode, "enable", &enable)) {
++			return 0; /* non-secure */
++		} else {
++			return enable;
++		}
++	}
++	return 0; /* non-secure */
++}
++
+ /*
+  * Module Init function
+  */
+@@ -186,6 +292,7 @@ static int sbus_probe(struct platform_device *pdev)
+ 	struct device *dev = &pdev->dev;
+ 	struct resource *res;
+ 	struct sbusdev_info *sbus_ring;
++	int is_secure = 0;
+ 
+ 	if (dev_inst > MAX_DEVICES-1)
+ 		return -ENODEV;
+@@ -203,11 +310,16 @@ static int sbus_probe(struct platform_device *pdev)
+ 	sbus_ring->pdev = pdev;
+ 	platform_set_drvdata(pdev, sbus_ring);
+ 
++	is_secure = of_get_secure_mode();
+ 	res = platform_get_resource(pdev, IORESOURCE_MEM, 0);
+-	sbus_ring->sbus_indir = devm_ioremap_resource(dev, res);
+-	if (IS_ERR(sbus_ring->sbus_indir)) {
+-		dev_err(dev, "Cannot remap sbus reg addresses.\n");
+-		return PTR_ERR(sbus_ring->sbus_indir);
++	if (is_secure) {
++		sbus_ring->sbus_indir = (void *)res->start;
++	} else {
++		sbus_ring->sbus_indir = (void *)devm_ioremap_resource(dev, res);
++		if (IS_ERR(sbus_ring->sbus_indir)) {
++			dev_err(dev, "Cannot remap sbus reg addresses.\n");
++			return PTR_ERR(sbus_ring->sbus_indir);
++		}
+ 	}
+ 	sbus_ring->sbus_dhs = sbus_ring->sbus_indir + 0x4;
+ 
+@@ -256,6 +368,15 @@ static int sbus_probe(struct platform_device *pdev)
+ 	}
+ 	dev_inst++;
+ 
++	/* Set the reg read/write ops based on secure/non-secure mode of operation */
++	if (is_secure) {
++		pr_info("pensando-sbus: Using secure ops\n");
++		sbus_ring->rops = &sec_rops;
++	} else {
++		pr_info("pensando-sbus: Using non-secure ops\n");
++		sbus_ring->rops = &ns_rops;
++	}
++
+ 	return 0;
+ 
+ r_device:
+-- 
+2.17.1
+
