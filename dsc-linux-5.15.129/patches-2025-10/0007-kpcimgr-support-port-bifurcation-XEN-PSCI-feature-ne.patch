@@ -1,0 +1,1596 @@
+From 783cae80829e1006d2aa959b143069c5cb23a15b Mon Sep 17 00:00:00 2001
+From: Brad Larson <bradley.larson@amd.com>
+Date: Thu, 30 Oct 2025 18:58:01 -0700
+Subject: [PATCH 7/7] kpcimgr: support port bifurcation, XEN, PSCI, feature
+ negotiation, pciesvc load via sysfs
+
+* kpcimgr: XEN, PSCI and feature negotiation support
+Introduces new feature negotiation support
+Introduces support of virtual UART if booted through XEN
+Introduces support for PSCI relase of CPU
+
+* kpcimgr: support loading of pciesvc as firmware
+currently pciesvc is being loaded as kernel module,
+that creates dependency on kernel version and
+compilation.
+
+this patch creates support of loading pciesvc as a
+firmware via sysfs entry to eliminate above dependency.
+
+it also expands validity checks to ensure that pciesvc
+is not referencing any external functions.
+
+* kpcimgr: support pcie port bifurcation (#497)
+Support MSI interrupts configuration for multiple active ports
+
+* kpcimgr: optimize msi intr allocation and make old fields compat fields
+user macros to iterate over msi descriptors and derive port number from index
+active_port and msi are now compat fields, for compatibility with old pciesvc
+
+* kpcimgr: use kernel version specific msi desciterator macros
+msi iterator macros changes from kernel version 5.15 created
+macros to choose the right macro based on kernel version
+
+* kpcimgr: add feature flag for port bifurcation
+reject new pciesvc module if it does not support port bifurcation
+and kpcimgr is currently running in port bifurcation
+
+Signed-off-by: Rob Gardner <rob.gardner@oracle.com>
+Signed-off-by: Joseph Dobosenski <joseph.dobosenski@oracle.com>
+Signed-off-by: Brad Larson <bradley.larson@amd.com>
+---
+ drivers/soc/pensando/kpci_constants.h |  48 +--
+ drivers/soc/pensando/kpcimgr.c        | 465 +++++++++++++++++++++-----
+ drivers/soc/pensando/kpcimgr_api.h    | 101 ++++--
+ drivers/soc/pensando/kpcimgr_sysfs.c  | 448 ++++++++++++++++++++++++-
+ 4 files changed, 922 insertions(+), 140 deletions(-)
+
+diff --git a/drivers/soc/pensando/kpci_constants.h b/drivers/soc/pensando/kpci_constants.h
+index 602da16a0277..10e3d9d324dc 100644
+--- a/drivers/soc/pensando/kpci_constants.h
++++ b/drivers/soc/pensando/kpci_constants.h
+@@ -5,18 +5,20 @@
+ /*
+  * Layout of non-Linux Memory:
+  *  (base address provided in device tree and may change)
+- *  C500 0000  SHMEM segment (pciehw_shmem_t) [0x942440 bytes ~9.25Mb]
+- *  C5F0 0000  kpcimgr state (kstate_t)       [3 * 64k]
+- *  C5F3 0000  relocated code                 [Allow 256k]
+- *  C5F7 0000  available for stack when in nommu mode (64k)
+- *  C5F8 0000  top of stack
+- *  C5FF FFFF  end of 1M allotted range
++ *  C5F8 D000  kpcimgr state (kstate_t) [140k]
++ *  C5FB 0000  relocated code [kstate + KSTATE_CODE_OFFSET] [284k]
++ *       ....  code grows upwards and stack downwards
++ *  C5FF 7000  top of stack [kstate + KSTATE_STACK_OFFSET]
++ *  C5FF 7000 - C5FF F000 Reserved
++ *  C5FF FFE0  fake efi.mem area for LPI
++ *  C5FF FFFF  end of HWMEM range
+  */
+-#define SHMEM_KSTATE_OFFSET       0xF00000
+-#define SHMEM_KSTATE_SIZE          0x30000
+-#define KSTATE_STACK_OFFSET        0x80000
+-#define KSTATE_CODE_OFFSET      (SHMEM_KSTATE_OFFSET + SHMEM_KSTATE_SIZE)
+-#define KSTATE_CODE_SIZE        (256 * 1024)
++#define COMPAT_SHMEM_KSTATE_OFFSET 0xF00000
++#define SHMEM_KSTATE_SIZE_OLD	0x30000
++#define SHMEM_KSTATE_SIZE	0x23000
++#define KSTATE_CODE_OFFSET	SHMEM_KSTATE_SIZE
++#define KSTATE_CODE_SIZE	(284 * 1024)
++#define KSTATE_STACK_OFFSET	(KSTATE_CODE_OFFSET + KSTATE_CODE_SIZE)
+ #define KSTATE_MAGIC            0x1743BA1F
+ 
+ /* size of trace data arrays */
+@@ -24,18 +26,24 @@
+ #define MSG_BUF_SIZE 32768
+ 
+ /* uart and time related constants */
+-#define PEN_UART 0x4800
+-#define UART_THR 0
+-#define UART_LSR 0x14
+-#define DATA_READY 1
+-#define OK_TO_WRITE 0x20
+-#define UART_THRE_BIT 5
++/* NS16550 defines */
++#define NS16550_UART		0x4800
++#define NS16550_LSR		0x14
++#define NS16550_DATA_READY	0x01
++#define NS16550_THRE		0x20
++
++/* PL011 defines */
++#define UART_PL011_FR		0x18
++#define UART011_FR_TXFE		0x080
++#define UART011_FR_RXFF		0x040
++#define UART01x_FR_TXFF		0x020
++#define UART01x_FR_RXFE		0x010
+ 
+ /* phases */
+ #define NOMMU 0
+ #define NORMAL 1
+ #define NUM_PHASES 2
+ 
+-#define MSI_INDIRECT_IDX	0	/* indirect vector */
+-#define MSI_NOTIFY_IDX		1	/* notify vector */
+-#define MSI_NVECTORS		2
++#define PCIE_NPORTS		8
++#define MSI_NVECTORS_COMPAT	2
++#define MSI_NVECTORS		(PCIE_NPORTS * 2) /* 2 vectors per port, indirect and notify */
+diff --git a/drivers/soc/pensando/kpcimgr.c b/drivers/soc/pensando/kpcimgr.c
+index 9fced719bafc..3ab0ab6133ae 100644
+--- a/drivers/soc/pensando/kpcimgr.c
++++ b/drivers/soc/pensando/kpcimgr.c
+@@ -15,6 +15,10 @@
+ 
+ #include "kpcimgr_api.h"
+ #include "penpcie_dev.h"
++#include <linux/of_fdt.h>
++#include <linux/delay.h>
++#include <asm/cpu_ops.h>
++#include <linux/version.h>
+ 
+ MODULE_LICENSE("GPL");
+ 
+@@ -22,11 +26,55 @@ kstate_t *kstate;
+ DEFINE_SPINLOCK(kpcimgr_lock);
+ static DECLARE_WAIT_QUEUE_HEAD(event_queue);
+ 
+-void *kpci_memset(void *s, int c, size_t n);
+-void kpcimgr_normal_poll(void);
+-int contains_external_refs(struct module *mod, void *code_end);
+-u64 kpcimgr_preg_read(u64 pa);
+-unsigned long kpcimgr_get_entry(unsigned long old_entry, unsigned int cpu);
++#define MSI_INDEX(desc)			((desc)->platform.msi_index)
++#define MSI_FOR_EACH_DESC(desc, dev)	for_each_msi_entry((desc), (dev))
++
++/*
++ * get_uart_addr
++ *
++ * The uart physical address changes if we're booted as a xen virtual machine,
++ * so we must dig it out of the device tree
++ */
++static long get_uart_addr(void)
++{
++	struct device_node *dn;
++	struct resource res;
++	int err;
++
++	dn = of_find_node_by_path("/soc/serial@4800");
++	if (!dn)
++		dn = of_find_node_by_path("/sbsa-uart@5000");
++	if (!dn) {
++		pr_info("KPCIMGR: found no uarts\n");
++		return 0;
++	}
++	err = of_address_to_resource(dn, 0, &res);
++	if (err) {
++		pr_info("KPCIMGR: could not read uart resource\n");
++		return 0;
++	}
++	pr_info("KPCIMGR: uart found at %llx/%llx\n", res.start, resource_size(&res));
++	return (long)res.start;
++}
++
++/*
++ * Simple function to tell us if we're booted as a xen virtual machine.
++ * There is probably a nicer way, but this method is simple: check for
++ * the existence of a "passthrough" node in the device tree.
++ */
++static void *booted_with_xen(void)
++{
++	return of_find_node_by_path("/passthrough");
++}
++
++/*
++ * Simple check for PSCI is to just look for a "psci" node in the
++ * device tree.
++ */
++static void *booted_with_psci(void)
++{
++	return of_find_node_by_path("/psci");
++}
+ 
+ void wake_up_event_queue(void)
+ {
+@@ -111,11 +159,16 @@ void kpcimgr_stop_running(void)
+ 	kstate_t *ks = get_kstate();
+ 	void (*shut_fn)(int n);
+ 	unsigned long flags;
++	int port;
+ 
+ 	spin_lock_irqsave(&kpcimgr_lock, flags);
+ 	if (ks->valid == KSTATE_MAGIC) {
+ 		shut_fn = ks->code_base + ks->code_offsets[K_ENTRY_SHUT];
+-		shut_fn(ks->active_port);
++
++		for (port = 0; port < PCIE_NPORTS; port++) {
++			if (ks->active_port_mask & (1 << port))
++				shut_fn(port);
++		}
+ 	}
+ 	spin_unlock_irqrestore(&kpcimgr_lock, flags);
+ 
+@@ -241,24 +294,21 @@ static int open_kpcimgr(struct inode *inode, struct file *filp)
+ }
+ 
+ /*
+- * Examine code and look for calls (BL insn) and data references
+- * (ADRP) to memory addresses outside of the bounds of the module. If
+- * any are found, report them and return an error.
++ * Examine code and look for calls (BL insn) that are beyond the bounds of the text section, and
++ * data references (ADRP) to memory outside of the image. If any are found, report them and return
++ * an error.
+  */
+-int contains_external_refs(struct module *mod, void *code_end)
++int contains_external_refs(unsigned long image_start, unsigned long image_end,
++			   unsigned long text_start, unsigned long text_end)
+ {
+-	unsigned long start = (unsigned long)mod->core_layout.base;
+ 	char code_loc[KSYM_SYMBOL_LEN], target_ref[KSYM_SYMBOL_LEN];
+ 	int insn_count, call_count, adrp_count;
+-	unsigned long size, target, insn_addr;
++	unsigned long target, insn_addr;
+ 	s32 offset;
+ 	u32 insn;
+ 
+-	size = (unsigned long)code_end - start;
+-
+-	for (insn_addr = start, insn_count = 0, call_count = 0, adrp_count = 0;
+-	     insn_addr < start + size;
+-	     insn_addr += sizeof(u32)) {
++	for (insn_addr = text_start, insn_count = 0, call_count = 0, adrp_count = 0;
++		 insn_addr < text_end; insn_addr += sizeof(u32)) {
+ 		if (aarch64_insn_read((void *)insn_addr, &insn)) {
+ 			pr_err("Failed to read insn @ %lx\n", insn_addr);
+ 			return 1;
+@@ -269,7 +319,7 @@ int contains_external_refs(struct module *mod, void *code_end)
+ 			offset = aarch64_get_branch_offset(insn);
+ 			target = insn_addr + offset;
+ 
+-			if (within_module(target, mod))
++			if (target >= text_start && target <= text_end)
+ 				continue;
+ 
+ 			sprint_symbol(code_loc, insn_addr);
+@@ -284,7 +334,7 @@ int contains_external_refs(struct module *mod, void *code_end)
+ 			offset = aarch64_insn_adrp_get_offset(insn);
+ 			target = (insn_addr & PAGE_MASK) + offset;
+ 
+-			if (within_module(target, mod))
++			if (target >= image_start && target <= image_end)
+ 				continue;
+ 
+ 			sprint_symbol(code_loc, insn_addr);
+@@ -304,6 +354,46 @@ int contains_external_refs(struct module *mod, void *code_end)
+ 		return 0;
+ }
+ 
++/*
++ * feature_check
++ *
++ * Ensure pciesvc library supports features we need. Currently we
++ * only are concerned with PSCI and XEN, and in both cases we need
++ * to disallow kexec if the library doesn't know about these, otherwise
++ * it will either crash quickly or never return.
++ */
++static int feature_check(long features)
++{
++	kstate_t *ks = get_kstate();
++	int apm = ks->active_port_mask;
++
++	if (apm && (apm & (apm - 1)) != 0 && (features & FLAG_PORT_BIFURCATION) == 0) {
++		pr_err("KPCIMGR: pciesvc module does not support port bifurcation\n");
++		return -1;
++	}
++
++	if (!ks->have_persistent_mem)
++		return 0;
++
++	ks->features |= FLAG_KEXEC;
++	if ((ks->features & FLAG_PSCI) && (features & FLAG_PSCI) == 0) {
++		pr_err("KPCIMGR: module does not provide required PSCI support\n");
++		pr_err("KPCIMGR: kexec capability is disabled\n");
++		ks->features &= ~FLAG_KEXEC;
++	}
++
++	if ((ks->features & FLAG_XEN) && (features & FLAG_XEN) == 0) {
++		pr_err("KPCIMGR: module does not provide required XEN support\n");
++		pr_err("KPCIMGR: kexec capability is disabled\n");
++		ks->features &= ~FLAG_KEXEC;
++	}
++
++	if (ks->features & FLAG_KEXEC)
++		pr_info("KPCIMGR: kexec capability enabled\n");
++
++	return 0;
++}
++
+ /*
+  * module_register
+  *
+@@ -331,27 +421,30 @@ int contains_external_refs(struct module *mod, void *code_end)
+ int kpcimgr_module_register(struct module *mod,
+ 			    struct kpcimgr_entry_points_t *ep, int relocate)
+ {
++	unsigned long start_addr, iflags, module_cap;
++	void (*features)(long *modcap, long resv1, long resv2, long resv3);
+ 	void *code_end = ep->code_end;
+ 	kstate_t *ks = get_kstate();
+-	unsigned long start_addr, iflags;
+ 	void (*init_fn)(kstate_t *ks);
+ 	void (*version_fn)(char **);
+ 	char *mod_buildtime;
+-	int i, was_running, nentries;
++	int i, was_running;
++
++	if (ks == NULL) {
++		pr_info("KPCIMGR: failure to start\n");
++		return -ENODEV;
++	}
+ 
+ 	start_addr = (unsigned long)mod->core_layout.base;
+ 
+-	if (ep->expected_mgr_version != KPCIMGR_KERNEL_VERSION
+-#ifdef PEN_COMPAT_V2
+-	    && ep->expected_mgr_version != 2
+-#endif
+-	   ) {
++	if (ep->expected_mgr_version != KPCIMGR_KERNEL_VERSION) {
+ 		pr_info("KPCIMGR: '%s' expects kernel version %d, incompatible with version %d\n",
+ 			mod->name, ep->expected_mgr_version, KPCIMGR_KERNEL_VERSION);
+ 		return -EINVAL;
+ 	}
+ 
+-	if (contains_external_refs(mod, code_end)) {
++	if (contains_external_refs(start_addr, start_addr + mod->core_layout.size,
++							   start_addr, (unsigned long) code_end)) {
+ 		pr_err("KPCIMGR: relocation failed for '%s'\n", mod->name);
+ 		return -ENXIO;
+ 	}
+@@ -361,6 +454,21 @@ int kpcimgr_module_register(struct module *mod,
+ 		return -EFBIG;
+ 	}
+ 
++	init_fn = ep->entry_point[K_ENTRY_INIT_FN];
++	init_fn(ks);
++
++	version_fn = ep->entry_point[K_ENTRY_GET_VERSION];
++	mod_buildtime = "";
++	version_fn(&mod_buildtime);
++
++	/* Ensure the module supports PSCI if we are booted with it */
++	features = ep->entry_point[K_ENTRY_FEATURES];
++	module_cap = 0;
++	features(&module_cap, 0, 0, 0);
++
++	if (feature_check(module_cap))
++		return -EINVAL;
++
+ 	was_running = ks->running;
+ 	if (was_running) {
+ 		pr_info("%s: kpcimgr has stopped running\n", __func__);
+@@ -390,7 +498,6 @@ int kpcimgr_module_register(struct module *mod,
+ 			    mod->core_layout.size);
+ 		flush_icache_range((long)ks->code_base,
+ 				   (long)ks->code_base + mod->core_layout.size);
+-
+ 		set_memory_x((unsigned long)ks->code_base,
+ 			     mod->core_layout.size >> PAGE_SHIFT);
+ 	} else {
+@@ -400,27 +507,9 @@ int kpcimgr_module_register(struct module *mod,
+ 	}
+ 	ks->code_size = mod->core_layout.size;
+ 
+-#ifdef PEN_COMPAT_V2
+-	nentries = ep->expected_mgr_version == 2 ? 7 : K_NUM_ENTRIES;
+-#else
+-	nentries = K_NUM_ENTRIES;
+-#endif
+-	for (i = 0; i < nentries; i++)
++	for (i = 0; i < K_NUM_ENTRIES; i++)
+ 		ks->code_offsets[i] = (unsigned long)ep->entry_point[i]
+ 			- start_addr;
+-	for (; i < K_NUM_ENTRIES; i++)
+-		ks->code_offsets[i] = 0;
+-
+-	if (ks->code_offsets[K_ENTRY_INIT_FN]) {
+-		init_fn = ks->code_base + ks->code_offsets[K_ENTRY_INIT_FN];
+-		init_fn(ks);
+-	}
+-
+-	mod_buildtime = "";
+-	if (ks->code_offsets[K_ENTRY_GET_VERSION]) {
+-		version_fn = ks->code_base + ks->code_offsets[K_ENTRY_GET_VERSION];
+-		version_fn(&mod_buildtime);
+-	}
+ 
+ 	pr_info("KPCIMGR: module '%s: %s', start=%lx, end=%lx, size=%d\n",
+ 		mod->name, mod_buildtime, start_addr,
+@@ -443,6 +532,143 @@ int kpcimgr_module_register(struct module *mod,
+ }
+ EXPORT_SYMBOL(kpcimgr_module_register);
+ 
++/*
++ * check_borrowed_cpu()
++ *
++ * When we're booting up after a kexec, we might have "borrowed"
++ * a cpu to run pciesvc during the reboot. In spin table mode,
++ * the borrowed cpu monitors the spin table release address,
++ * which tells it to return to the system.
++ *
++ * In PSCI mode, we have to signal the borrowed cpu to stop
++ * executing the pciesvc code. We do this by setting
++ * FLAG_PSCI_CPU_RELEASE in ks->features, and the cpu
++ * responds by setting FLAG_PSCI_CPU_RELEASED and then
++ * executing the psci cpu_die() firmware call. In this case
++ * the system won't be able to activate the borrowed cpu
++ * during secondary cpu activation, so we do this here.
++ */
++
++void check_borrowed_cpu(kstate_t *ks)
++{
++	const struct cpu_operations *cpu_ops;
++	unsigned long start, end;
++
++	/* if not booted with psci, then nothing to do here */
++	if (!(ks->features & FLAG_PSCI))
++		return;
++
++	/* if pciesvc not running, then nothing to do here */
++	if (!ks->running)
++		return;
++
++	/* if cpu already released, then nothing to do here */
++	if (ks->features & FLAG_PSCI_CPU_RELEASED)
++		return;
++
++	cpu_ops = get_cpu_ops(ks->running);
++	pr_info("KPCIMGR: releasing borrowed CPU#%d\n", ks->running);
++
++	/* send the release signal */
++	ks->features |= FLAG_PSCI_CPU_RELEASE;
++
++	/* wait for pciesvc to respond */
++	start = jiffies;
++	end = start + msecs_to_jiffies(50);
++	do {
++		if (ks->features & FLAG_PSCI_CPU_RELEASED)
++			break;
++		cpu_relax();
++	} while (time_before(jiffies, end));
++
++	pr_info("KPCIMGR: %s response from CPU#%d after %dms\n",
++		(ks->features & FLAG_PSCI_CPU_RELEASED) ? "got" : "no",
++		ks->running, jiffies_to_msecs(jiffies - start));
++
++	/* wait until cpu makes it to the off state */
++	pr_info("KPCIMGR: returning CPU#%d to system\n", ks->running);
++	if (cpu_ops && cpu_ops->cpu_kill)
++		cpu_ops->cpu_kill(ks->running);  /* this could poll for 100ms */
++	else
++		mdelay(5);	/* 3ms consistently fails, while 4 works */
++
++	/* finally, activate the borrowed cpu */
++	add_cpu(ks->running);
++	pr_info("KPCIMGR: return of CPU#%d complete\n", ks->running);
++}
++
++int load_firmware(void *image)
++{
++	kstate_t *ks = get_kstate();
++	struct fw_info_t *fw;
++	unsigned long iflags;
++	int i, was_running;
++
++	/* Perform sanity checks */
++	if (ks == NULL) {
++		pr_info("KPCIMGR: kpcimgr not running or failed to start\n");
++		return -ENODEV;
++	}
++
++	fw = get_fw_info(image);
++
++	pr_info("KPCIMGR: firmware expects mgr ver=%d, lib version=%d.%d\n",
++	fw->expected_mgr_version, fw->lib_version_major, fw->lib_version_minor);
++
++	if (fw->expected_mgr_version != KPCIMGR_KERNEL_VERSION) {
++		pr_info("KPCIMGR: firmware expects kernel version %d, incompatible with version %d\n",
++		fw->expected_mgr_version, KPCIMGR_KERNEL_VERSION);
++		return -EINVAL;
++	}
++
++	if (feature_check(fw->features))
++		return -EINVAL;
++
++	was_running = ks->running;
++	if (was_running) {
++		pr_info("%s: kpcimgr has stopped running\n", __func__);
++		kpcimgr_stop_running();
++	}
++
++	spin_lock_irqsave(&kpcimgr_lock, iflags);
++	ks->valid = 0;
++
++	/* Release old firmware */
++	if (ks->mod) {
++		module_put(ks->mod);
++		ks->mod = NULL;
++	} else {
++		module_memfree(ks->code_base);
++	}
++
++	/* Switch over to using the new firmware */
++	ks->code_base = image;
++	ks->code_size = fw->image_size;
++
++	for (i = 0; i < K_NUM_ENTRIES; i++)
++		ks->code_offsets[i] = (unsigned long) fw->code_offsets[i];
++
++	pr_info("KPCIMGR: service library: '%s', start=0x%lx, end=0x%lx, size=0x%lx\n",
++		fw->build_time, (unsigned long) ks->code_base,
++		(unsigned long) ks->code_base + ks->code_size, ks->code_size);
++
++	set_init_state(ks);
++	ks->valid = KSTATE_MAGIC;
++	ks->lib_version_major = fw->lib_version_major;
++	ks->lib_version_minor = fw->lib_version_minor;
++
++	/* Release lock and restart kpcimgr if we were running */
++	spin_unlock_irqrestore(&kpcimgr_lock, iflags);
++	if (was_running) {
++		kpcimgr_start_running();
++		pr_info("%s: kpcimgr will begin running\n", __func__);
++	} else {
++		reset_stats(ks);
++	}
++
++	return 0;
++}
++
+ static void unmap_resources(void)
+ {
+ 	kstate_t *ks = get_kstate();
+@@ -457,6 +683,9 @@ static void unmap_resources(void)
+ 	if (ks->uart_addr)
+ 		iounmap(ks->uart_addr);
+ 
++	if (ks->code_base && !ks->mod)
++		module_memfree(ks->code_base);
++
+ 	if (ks->have_persistent_mem) {
+ 		if (ks->persistent_base)
+ 			iounmap(ks->persistent_base);
+@@ -472,8 +701,8 @@ static void unmap_resources(void)
+ static int map_resources(struct platform_device *pfdev)
+ {
+ 	struct device_node *dn = pfdev->dev.of_node;
+-	u32 shmem_idx, hwmem_idx;
+-	struct resource res;
++	u32 shmem_idx, hwmem_idx, kstate_idx = -1;
++	struct resource res, kstate_res;
+ 	kstate_t *ks;
+ 	void *shmem;
+ 	int i, err;
+@@ -497,6 +726,19 @@ static int map_resources(struct platform_device *pfdev)
+ 		return -ENOMEM;
+ 	}
+ 
++	/* if no kstate index, fall back to old scheme */
++	err = of_property_read_u32(dn, "kstate-index", &kstate_idx);
++	if (err) {
++		pr_err("KPCIMGR: using default kstate offset\n");
++		kstate_res.start = res.start + COMPAT_SHMEM_KSTATE_OFFSET;
++	} else {
++		err = of_address_to_resource(dn, kstate_idx, &kstate_res);
++		if (err) {
++			pr_err("KPCIMGR: no kstate resource\n");
++			return -ENOMEM;
++		}
++	}
++
+ 	if (res.start == 0) {
+ 		/* indicates no persistent memory */
+ 		pr_info("KPCIMGR: no persistent memory\n");
+@@ -504,7 +746,7 @@ static int map_resources(struct platform_device *pfdev)
+ 		if (ks == NULL)
+ 			return -ENOMEM;
+ 		memset((void *)ks, 0, sizeof(kstate_t));
+-		ks->active_port = -1;
++		ks->active_port_compat = -1;
+ 		ks->have_persistent_mem = 0;
+ 		shmem = vmalloc(resource_size(&res));
+ 		if (shmem == NULL) {
+@@ -514,17 +756,13 @@ static int map_resources(struct platform_device *pfdev)
+ 		ks->shmembase = 0;
+ 		ks->shmem_size = resource_size(&res);
+ 	} else {
+-		if (resource_size(&res) > SHMEM_KSTATE_OFFSET) {
+-			pr_err("KPCIMGR: shmem size overlaps kstate\n");
+-			return -ENODEV;
+-		}
+ 		shmem = ioremap(res.start, resource_size(&res));
+ 		if (shmem == NULL) {
+ 			pr_err("KPCIMGR: failed to map shmem\n");
+ 			return -ENODEV;
+ 		}
+ 
+-		ks = ioremap(res.start + SHMEM_KSTATE_OFFSET, sizeof(kstate_t));
++		ks = ioremap(kstate_res.start, sizeof(kstate_t));
+ 		if (ks == NULL) {
+ 			pr_err("KPCIMGR: failed to map kstate\n");
+ 			iounmap(shmem);
+@@ -532,16 +770,17 @@ static int map_resources(struct platform_device *pfdev)
+ 		}
+ 		if (ks->valid != KSTATE_MAGIC) {
+ 			kpci_memset((void *)ks, 0, sizeof(kstate_t));
+-			ks->active_port = -1;
++			ks->active_port_compat = -1;
+ 		}
+ 
++		ks->kstate_paddr = kstate_res.start;
+ 		ks->have_persistent_mem = 1;
+ 		ks->shmembase = res.start;
+ 		ks->shmem_size = resource_size(&res);
+ 		pr_info("KPCIMGR: kstate mapped %llx at %lx\n",
+-			res.start + SHMEM_KSTATE_OFFSET, (long)ks);
++			kstate_res.start, (long)ks);
+ 
+-		ks->persistent_base = ioremap(res.start + KSTATE_CODE_OFFSET,
++		ks->persistent_base = ioremap(ks->kstate_paddr + KSTATE_CODE_OFFSET,
+ 					      KSTATE_CODE_SIZE);
+ 		if (ks->persistent_base == NULL) {
+ 			pr_err("KPCIMGR: failed to map shmem code space\n");
+@@ -549,16 +788,28 @@ static int map_resources(struct platform_device *pfdev)
+ 		}
+ 
+ 		if (ks->valid == KSTATE_MAGIC) {
++			check_borrowed_cpu(ks);
+ 			ks->code_base = module_alloc(ks->code_size);
+ 			if (ks->code_base == NULL) {
+ 				pr_err("KPCIMGR: module_alloc(%lx) failed\n",
+ 				       ks->code_size);
+ 				goto errout;
+ 			}
+-			kpci_memcpy(ks->code_base, ks->persistent_base,
+-				    ks->code_size);
++			if (ks->features_valid == KSTATE_MAGIC) {
++				kpci_memcpy(ks->code_base, ks->persistent_base, ks->code_size);
++			} else {
++				/* we were kexec'd from an old kernel, so code is at old address */
++				void *old_code = ioremap(ks->kstate_paddr + SHMEM_KSTATE_SIZE_OLD,
++							 ks->code_size);
++				if (old_code == NULL) {
++					pr_err("KPCIMGR: failed to map old code area\n");
++					goto errout;
++				}
++				kpci_memcpy(ks->code_base, old_code, ks->code_size);
++				iounmap(old_code);
++			}
+ 			flush_icache_range((long)ks->code_base,
+-					   (long)ks->code_base + KSTATE_CODE_SIZE);
++					   (long)ks->code_base + ks->code_size);
+ 			set_memory_x((unsigned long)ks->code_base,
+ 				     ks->code_size >> PAGE_SHIFT);
+ 		}
+@@ -567,18 +818,21 @@ static int map_resources(struct platform_device *pfdev)
+ 	kstate = ks;
+ 	ks->shmemva = shmem;
+ 
+-	ks->uart_addr = ioremap(PEN_UART, 0x1000);
++	ks->uart_paddr = get_uart_addr();
++	if (ks->uart_paddr)
++		ks->uart_addr = ioremap(ks->uart_paddr, 0x1000);
+ 	if (ks->uart_addr == NULL) {
+-		pr_err("KPCIMGR: failed to map elba uart\n");
++		pr_err("KPCIMGR: failed to map uart@%lx\n", ks->uart_paddr);
+ 		goto errout;
+ 	}
++
+ 	ks->driver_start_time = read_sysreg(cntvct_el0);
+ 
+ 	ks->nranges = 0;
+ 	for (i = 0; i < NUM_MEMRANGES; i++) {
+ 		struct mem_range_t *mr = &ks->mem_ranges[ks->nranges];
+ 
+-		if (i == shmem_idx)
++		if (i == shmem_idx || i == kstate_idx)
+ 			continue;
+ 
+ 		err = of_address_to_resource(dn, i, &res);
+@@ -596,6 +850,16 @@ static int map_resources(struct platform_device *pfdev)
+ 			ks->hwmem_idx = ks->nranges;
+ 		ks->nranges++;
+ 	}
++
++	if (booted_with_xen())
++		ks->features |= FLAG_XEN;
++	if (booted_with_psci())
++		ks->features |= FLAG_PSCI;
++	ks->features_valid = KSTATE_MAGIC;
++	pr_info("KPCIMGR: features xen=%s, psci=%s\n",
++		(ks->features & FLAG_XEN)  ? "yes" : "no",
++		(ks->features & FLAG_PSCI) ? "yes" : "no");
++
+ 	return 0;
+ 
+  errout:
+@@ -609,8 +873,9 @@ static int map_resources(struct platform_device *pfdev)
+ static irqreturn_t kpcimgr_indirect_intr(int irq, void *arg)
+ {
+ 	int (*intr_fn)(kstate_t *, int);
+-	kstate_t *ks = (kstate_t *)arg;
+-	int port, r = 0;
++	kstate_t *ks = get_kstate();
++	int port = (int)(uintptr_t)arg;
++	int r = 0;
+ 
+ 	spin_lock(&kpcimgr_lock);
+ 	if (ks->valid == KSTATE_MAGIC) {
+@@ -618,7 +883,6 @@ static irqreturn_t kpcimgr_indirect_intr(int irq, void *arg)
+ 		intr_fn = ks->code_base +
+ 			ks->code_offsets[K_ENTRY_INDIRECT_INTR];
+ 
+-		port = ks->active_port;
+ 		if (port >= 0)
+ 			r = intr_fn(ks, port);
+ 	}
+@@ -633,15 +897,15 @@ static irqreturn_t kpcimgr_indirect_intr(int irq, void *arg)
+ static irqreturn_t kpcimgr_notify_intr(int irq, void *arg)
+ {
+ 	int (*intr_fn)(kstate_t *, int);
+-	kstate_t *ks = (kstate_t *)arg;
+-	int port, r = 0;
++	kstate_t *ks = get_kstate();
++	int port = (int)(uintptr_t)arg;
++	int r = 0;
+ 
+ 	spin_lock(&kpcimgr_lock);
+ 	if (ks->valid == KSTATE_MAGIC) {
+ 		ks->not_intr++;
+ 		intr_fn = ks->code_base + ks->code_offsets[K_ENTRY_NOTIFY_INTR];
+ 
+-		port = ks->active_port;
+ 		if (port >= 0)
+ 			r = intr_fn(ks, port);
+ 	}
+@@ -684,7 +948,7 @@ static u64 kpcimgr_upcall(int req, u64 arg1, u64 arg2, u64 arg3)
+ static void set_msi_msg(struct msi_desc *desc, struct msi_msg *msg)
+ {
+ 	kstate_t *ks = get_kstate();
+-	struct msi_info *msi = &ks->msi[desc->platform.msi_index];
++	msi_info_t *msi = &ks->msi[MSI_INDEX(desc)];
+ 
+ 	msi->msgaddr = ((u64)msg->address_hi << 32) | msg->address_lo;
+ 	msi->msgdata = msg->data;
+@@ -715,21 +979,31 @@ static int alloc_intrs(struct platform_device *pfdev)
+ 	irqreturn_t (*isr)(int irq, void *arg);
+ 	struct device *dev = &pfdev->dev;
+ 	kstate_t *ks = get_kstate();
+-	struct msi_desc *desc;
++	struct msi_desc *desc = NULL;
+ 	char *name;
+-	int r;
++	int r, isr_select, port = 0;
+ 
+ 	r = platform_msi_domain_alloc_irqs(dev, MSI_NVECTORS, set_msi_msg);
+ 	if (r)
+ 		return r;
+ 
+-	for_each_msi_entry(desc, dev) {
+-		isr = kpcimgr_irq_table[desc->platform.msi_index].isr;
+-		name = kpcimgr_irq_table[desc->platform.msi_index].name;
+-		r = devm_request_irq(dev, desc->irq, isr, 0, name, (void *)ks);
++	MSI_FOR_EACH_DESC(desc, dev) {
++		isr_select = MSI_INDEX(desc) & 1;
++		isr = kpcimgr_irq_table[isr_select].isr;
++		name = devm_kasprintf(dev, GFP_KERNEL, "%s-%d",
++			kpcimgr_irq_table[isr_select].name, port);
++		if (!name) {
++			r = -ENOMEM;
++			goto err_out;
++		}
++		r = devm_request_irq(dev, desc->irq, isr, 0, name, (void *)(uintptr_t)port);
+ 		if (r)
+ 			goto err_out;
++		port += isr_select;
+ 	}
++
++	// copy port 0 interrupts to original msi
++	kpci_memcpy(ks->msi_compat, ks->msi, sizeof(ks->msi_compat));
+ 	return 0;
+ 
+  err_out:
+@@ -746,6 +1020,7 @@ static int kpcimgr_notify_reboot(struct notifier_block *this,
+ {
+ 	kstate_t *ks = get_kstate();
+ 	int was_running = ks->running;
++	void (*reboot_fn)(long resv0, long resv1, long resv2, long resv3);
+ 
+ 	/* stop running regardless of why a reboot is happening */
+ 	free_intrs(ks->pfdev);
+@@ -764,6 +1039,19 @@ static int kpcimgr_notify_reboot(struct notifier_block *this,
+ 		return NOTIFY_DONE;
+ 	}
+ 
++	if (!(ks->features & FLAG_KEXEC)) {
++		pr_err("KPCIMGR: halting since kexec not allowed for loaded library\n");
++		ks->valid = 0;
++		return NOTIFY_DONE;
++	}
++
++	reboot_fn = (void *)ks->code_base + ks->code_offsets[K_ENTRY_REBOOT];
++	if (ks->uart_paddr == 0) {
++		pr_err("KPCIMGR: no uart so service cannot persist\n");
++		return NOTIFY_DONE;
++	}
++	reboot_fn(0, 0, 0, 0); /* must be done before memcpy below */
++
+ 	/* relocate code to "persistent" memory */
+ 	kpci_memcpy(ks->persistent_base, ks->code_base, ks->code_size);
+ 
+@@ -777,6 +1065,7 @@ static int kpcimgr_notify_reboot(struct notifier_block *this,
+ 		reset_stats(ks);
+ 		ks->ncalls = 0;
+ 		ks->kexec_time = read_sysreg(cntvct_el0);
++		ks->features &= ~(FLAG_PSCI_CPU_RELEASE | FLAG_PSCI_CPU_RELEASED);
+ 	}
+ 	return NOTIFY_DONE;
+ }
+@@ -871,14 +1160,28 @@ builtin_platform_driver(kpcimgr_driver);
+ 
+ /*
+  * Get entry point for pciesvc specific secondary cpu holding pen.
+- * Called from arch/arm64/kernel/smp_spin_table.c
++ * Called from arch/arm64/kernel/smp_spin_table.c and
++ * arch/arm64/kernel/psci.c
++ *
+  * We choose the first cpu to arrive here. They will all try
+  * concurrently, but only one will be hijacked and the rest
+- * will go to their default holding pens.
++ * will go to their default holding pens. Since the physical
++ * address of kstate can no longer be derived from the physical
++ * address of shmem, we need to convey kstate_paddr directly
++ * to the holding pen function. This method must be kept
++ * to retain compatibility with old pciesvc library code.
++ * For newer library code, we pass the kstate paddr in via
++ * the feature() call which always occurs before the code
++ * is copied out to persistent memory. This means that kstate_paddr
++ * is part of the module's data at the time of the copy, so
++ * no further work is necessary. (n.b. this function is called
++ * after the copy to persistent memory, so any change to the module's
++ * data won't affect the data in persistent memory.)
+  */
+ unsigned long kpcimgr_get_entry(unsigned long old_entry, unsigned int cpu)
+ {
+-	unsigned long (*entry_fn)(unsigned long entry, unsigned int cpu);
++	unsigned long (*entry_fn)(unsigned long entry, unsigned int cpu,
++				  unsigned long kstate_paddr);
+ 	static DEFINE_SPINLOCK(choose_cpu_lock);
+ 	kstate_t *ks = get_kstate();
+ 	unsigned long entry;
+@@ -890,7 +1193,7 @@ unsigned long kpcimgr_get_entry(unsigned long old_entry, unsigned int cpu)
+ 	entry_fn = ks->code_base + ks->code_offsets[K_ENTRY_HOLDING_PEN];
+ 
+ 	spin_lock(&choose_cpu_lock);
+-	entry = entry_fn(old_entry, cpu);
++	entry = entry_fn(old_entry, cpu, ks->kstate_paddr);
+ 	spin_unlock(&choose_cpu_lock);
+ 
+ 	return entry;
+diff --git a/drivers/soc/pensando/kpcimgr_api.h b/drivers/soc/pensando/kpcimgr_api.h
+index 6abf387a485b..5c71943e4ad5 100644
+--- a/drivers/soc/pensando/kpcimgr_api.h
++++ b/drivers/soc/pensando/kpcimgr_api.h
+@@ -7,7 +7,6 @@
+ 
+ #ifdef __KERNEL__
+ #include <linux/miscdevice.h>
+-#include <linux/platform_device.h>
+ #include <linux/io.h>
+ #include <linux/module.h>
+ #include <linux/cdev.h>
+@@ -22,8 +21,8 @@
+ #include <linux/kallsyms.h>
+ #include <linux/moduleloader.h>
+ #include <linux/set_memory.h>
+-#include <asm/cacheflush.h>
+ #include <asm/insn.h>
++#include <asm/cacheflush.h>
+ #endif
+ 
+ #include "kpci_constants.h"
+@@ -39,6 +38,8 @@
+ #define K_ENTRY_CMD_READ 8
+ #define K_ENTRY_CMD_WRITE 9
+ #define K_ENTRY_GET_VERSION 10
++#define K_ENTRY_FEATURES 11
++#define K_ENTRY_REBOOT 12
+ #define K_NUM_ENTRIES 16
+ 
+ struct kpcimgr_entry_points_t {
+@@ -49,6 +50,15 @@ struct kpcimgr_entry_points_t {
+ 	void *entry_point[K_NUM_ENTRIES];
+ };
+ 
++/* feature bits */
++#define FLAG_PSCI_CPU_RELEASE	BIT_ULL(0)
++#define FLAG_PSCI		BIT_ULL(1)
++#define FLAG_XEN		BIT_ULL(2)
++#define FLAG_PSCI_CPU_RELEASED	BIT_ULL(3)
++#define FLAG_KEXEC		BIT_ULL(4)
++#define FLAG_PORT_BIFURCATION	BIT_ULL(5)
++#define FLAG_FUTURE_FEATURE	BIT_ULL(15)
++
+ /* upcalls */
+ #define WAKE_UP_EVENT_QUEUE 1
+ #define PRINT_LOG_MSG 2
+@@ -64,12 +74,30 @@ struct kpcimgr_entry_points_t {
+ /* max number of memory ranges from device tree */
+ #define NUM_MEMRANGES 32
+ 
++/* trace_data[] elements */
++#define FIRST_CALL_TIME 0
++#define FIRST_SEQNUM 1
++#define LAST_SEQNUM 2
++#define TAG 3
++#define PA_BAD_CNT 4
++#define NUM_CHECKS 5
++#define NUM_CALLS 6
++#define NUM_PENDINGS 7
++#define LAST_CALL_TIME 8
++#define EARLY_POLL 9
++#define MAX_DATA 10
++
++typedef struct {
++	unsigned long msgaddr;
++	unsigned int msgdata;
++} msi_info_t;
++
+ struct kpcimgr_state_t {
+ 	/* essential state */
+ 	int valid;
+ 	int debug;
+ 	int running;
+-	int active_port;
++	int active_port_compat; /* old active_port field */
+ 	int have_persistent_mem;
+ 	int lib_version_major;
+ 	int lib_version_minor;
+@@ -77,7 +105,18 @@ struct kpcimgr_state_t {
+ 	/* timestamps and general trace data */
+ 	long kexec_time;
+ 	long driver_start_time;
+-	unsigned long trace_data[NUM_PHASES][DATA_SIZE];
++	union {
++		unsigned long reserved_trace_data[NUM_PHASES][DATA_SIZE];
++		struct {
++			unsigned long trace_data[NUM_PHASES][MAX_DATA];
++			long kstate_paddr;
++			long uart_paddr;
++			int features;
++			int features_valid;
++			int active_port_mask;
++			msi_info_t msi[MSI_NVECTORS];
++		};
++	};
+ 
+ 	/* virtual addresses */
+ 	void *uart_addr;
+@@ -95,11 +134,8 @@ struct kpcimgr_state_t {
+ 	int nranges;
+ 	int hwmem_idx;
+ 
+-	/* interrupt vectors */
+-	struct msi_info {
+-		unsigned long msgaddr;
+-		unsigned int msgdata;
+-	} msi[MSI_NVECTORS];
++	/* old single port interrupt vectors */
++	msi_info_t msi_compat[MSI_NVECTORS_COMPAT];
+ 
+ 	/* stats for work done */
+ 	int ind_cfgrd, ind_cfgwr;
+@@ -126,25 +162,46 @@ typedef struct kpcimgr_state_t kstate_t;
+ _Static_assert(sizeof(kstate_t) < SHMEM_KSTATE_SIZE,
+ 	       "kstate size insufficient");
+ 
+-/* trace_data[] elements */
+-#define FIRST_CALL_TIME 0
+-#define FIRST_SEQNUM 1
+-#define LAST_SEQNUM 2
+-#define TAG 3
+-#define PA_BAD_CNT 4
+-#define NUM_CHECKS 5
+-#define NUM_CALLS 6
+-#define NUM_PENDINGS 7
+-#define LAST_CALL_TIME 8
+-#define EARLY_POLL 9
+-#define MAX_DATA 10
+-
+ #define KPCIMGR_DEV "/dev/kpcimgr"
+ #define KPCIMGR_NAME "kpcimgr"
+ #define PFX KPCIMGR_NAME ": "
+ #define KPCIMGR_KERNEL_VERSION 3
+ 
++#define FW_INFO_OFFSET   0x800
++#define FW_INFO_MAX_SIZE 0x800
++#define FW_INFO_MAGIC_V1 0xD0B05E18
++
++/*
++ * Structure used when loading firmware to enable easier access to points of interest within the
++ * code.
++ */
++struct fw_info_t {
++	unsigned long image_size;
++	unsigned long text_off;
++	unsigned long text_size;
++	unsigned long symtab_off;
++	unsigned long strtab_off;
++	unsigned long n_syms;
++	unsigned long features;
++	int expected_mgr_version;
++	int lib_version_major;
++	int lib_version_minor;
++	int valid;
++	char build_time[256];
++	void *code_offsets[K_NUM_ENTRIES];
++	unsigned long reserved[16];
++};
++_Static_assert(sizeof(struct fw_info_t) < FW_INFO_MAX_SIZE, "fw_info_t size too large");
++
++static inline struct fw_info_t *get_fw_info(void *image)
++{
++	return image + FW_INFO_OFFSET;
++}
++
+ #ifdef __KERNEL__
++int contains_external_refs(unsigned long image_start, unsigned long image_end,
++			   unsigned long text_start, unsigned long text_end);
++int load_firmware(void *image);
+ int kpcimgr_module_register(struct module *mod,
+ 			    struct kpcimgr_entry_points_t *ep, int relocate);
+ void kpcimgr_start_running(void);
+diff --git a/drivers/soc/pensando/kpcimgr_sysfs.c b/drivers/soc/pensando/kpcimgr_sysfs.c
+index fcee544a470c..3981e2a2ea73 100644
+--- a/drivers/soc/pensando/kpcimgr_sysfs.c
++++ b/drivers/soc/pensando/kpcimgr_sysfs.c
+@@ -7,8 +7,261 @@
+ 
+ #include "kpcimgr_api.h"
+ 
++#include <linux/elf.h>
++#include <linux/panic_notifier.h>
++#include <linux/stacktrace.h>
++
++static void *rawdata;
++static ssize_t elf_size;
+ int kpcimgr_active_port;
+ 
++/*
++ * Check if the offset falls within the provided firmware's text section
++ */
++int within_fw_text(struct fw_info_t *fw, unsigned long offset)
++{
++	if (offset >= fw->text_off && offset < ALIGN(fw->text_off + fw->text_size, PAGE_SIZE))
++		return 1;
++	else
++		return 0;
++}
++
++/*
++ * Locate the panic address within the firmware symbol table and write its info into the provided
++ * buffer. Returns the number of bytes written.
++ */
++int firmware_format_sym(char *buffer, unsigned long panic_addr)
++{
++	kstate_t *ks = get_kstate();
++	Elf64_Sym *iter, *sym;
++	struct fw_info_t *fw;
++	int i, len;
++
++	fw = get_fw_info(ks->code_base);
++
++	/* Calculate offset from ks->code_base and check if it falls within firmware text */
++	panic_addr = panic_addr - (unsigned long) ks->code_base;
++	if (!within_fw_text(fw, panic_addr))
++		return 0;
++
++	sym = ks->code_base + fw->symtab_off;
++
++	/* Locate the function containing the panic address */
++	for (i = 0, iter = sym; i < fw->n_syms; i++, iter++) {
++		if ((iter->st_info & STT_FUNC) == 0)
++			continue;
++		if (iter->st_value > sym->st_value && iter->st_value <= panic_addr)
++			sym = iter;
++	}
++
++	/* Format elf data into string for panic dump */
++	len = sprintf(buffer, "%s", (char *)((unsigned long)ks->code_base + fw->strtab_off +
++		      sym->st_name));
++	len += sprintf(buffer + len, "+%#lx/%#lx [pciesvc.lib]",
++	panic_addr - (unsigned long) sym->st_value, (unsigned long) sym->st_size);
++
++	return len;
++}
++
++/*
++ * Panic hook. On systems with kdump enabled, this won't get called unless you put
++ * "crash_kexec_post_notifiers" on the boot command line.
++ */
++static int firmware_panic(struct notifier_block *nb, unsigned long code, void *unused)
++{
++	unsigned long entries[48];
++	char buffer[KSYM_SYMBOL_LEN];
++	kstate_t *ks = get_kstate();
++	int requires_trace = 0;
++	int i, nr_entries;
++	struct fw_info_t *fw;
++
++	if (!ks->valid)
++		return NOTIFY_DONE;
++
++	nr_entries = stack_trace_save(entries, ARRAY_SIZE(entries), 0);
++	fw = get_fw_info(ks->code_base);
++
++	/* Check to see if any of the addresses in the panic correlate to a firmware address */
++	for (i = 0; i < nr_entries; i++) {
++		if (within_fw_text(fw, entries[i] - (unsigned long) ks->code_base)) {
++			requires_trace = 1;
++			break;
++		}
++	}
++
++	if (!requires_trace)
++		return NOTIFY_DONE;
++
++		pr_emerg("====== kpcimgr firmware stack trace: ======\n");
++		for (i = 0; i < nr_entries; i++) {
++			if (!firmware_format_sym(buffer, entries[i]))
++				sprint_symbol(buffer, entries[i]);
++
++			pr_emerg("%s\n", buffer);
++		}
++
++	return NOTIFY_DONE;
++}
++
++int sect_overlaps_text(struct fw_info_t *fw, Elf64_Shdr *sh)
++{
++	unsigned long section_end = sh->sh_offset + sh->sh_size;
++
++	if (within_fw_text(fw, sh->sh_offset))
++		return 1;
++
++	if (within_fw_text(fw, section_end))
++		return 1;
++
++	if (sh->sh_offset <= fw->text_off &&
++		section_end >= ALIGN(fw->text_off + fw->text_size, PAGE_SIZE)) {
++		return 1;
++	}
++
++	return 0;
++}
++
++/*
++ * Perform checks on ELF file read in from code_write sysfs entry. As checks are performed, the
++ * fw_info_t stored in the .pciesvc_info section will be filled out to provide easier references to
++ * important areas in the future.
++ */
++int prepare_firmware(void *image, ssize_t image_size)
++{
++	struct fw_info_t *fw;
++	char *sh_strtbl;
++	Elf64_Shdr *sh;
++	Elf64_Ehdr *h;
++	int i;
++
++	if (image == NULL || image_size == 0) {
++		pr_info("KPCIMGR: no firmware staged for running\n");
++		return -EINVAL;
++	}
++
++	h = image;
++	sh = image + h->e_shoff;
++	sh_strtbl = image + sh[h->e_shstrndx].sh_offset;
++
++	/* Check for ELF magic, correct architecture and endianness */
++	if ((memcmp(h->e_ident, ELFMAG, SELFMAG) != 0) || (h->e_machine != EM_AARCH64) ||
++	    (h->e_ident[EI_DATA] != ELFDATA2LSB)) {
++		pr_info("KPCIMGR: firmware is not a valid ELF file\n");
++		return -EINVAL;
++	}
++
++	/*
++	 * The ordering of first few sections of the firmware are expected to be as follows:
++	 * sh[0] = NULL section (and is thus skipped)
++	 * sh[1] = .pciesvc_info
++	 * sh[2] = .text
++	 * sh[...] = order doesn't matter
++	 */
++
++	/* Skip over NULL section and validate .pciesvc_info section */
++	sh++;
++	if (sh->sh_offset != FW_INFO_OFFSET ||
++		strcmp(sh_strtbl + sh->sh_name, ".pciesvc_info") != 0 ||
++		sh->sh_size != sizeof(struct fw_info_t)) {
++		pr_info("KPCIMGR: .pciesvc_info section not found or incorrect\n");
++		return -EINVAL;
++	}
++
++	fw = get_fw_info(image);
++	if (fw->valid != FW_INFO_MAGIC_V1) {
++		pr_info("KPCIMGR: firmware info is incorrect\n");
++		return -EINVAL;
++	}
++
++	fw->image_size = image_size;
++
++	/* Validate the .text section */
++	sh++;
++	if (strcmp(sh_strtbl + sh->sh_name, ".text") != 0) {
++		pr_info("KPCIMGR: First section was not .text\n");
++		return -EINVAL;
++	}
++
++	if (sh->sh_addr != sh->sh_offset) {
++		pr_info("KPCIMGR: ELF section offset and address do not match\n");
++		return -EINVAL;
++	}
++
++	if (sh->sh_offset & ~PAGE_MASK) {
++		pr_info("KPCIMGR: firmware text start is not aligned\n");
++		return -EINVAL;
++	}
++
++	if (contains_external_refs((unsigned long) image, (unsigned long) image + image_size,
++		(unsigned long) image + sh->sh_offset,
++		(unsigned long) image + sh->sh_offset + sh->sh_size)) {
++		pr_info("KPCIMGR: firmware contains external references\n");
++		return -EINVAL;
++	}
++
++	fw->text_off = sh->sh_offset;
++	fw->text_size = sh->sh_size;
++
++	/* Check that all function offsets are within the image */
++	for (i = 0; i < K_NUM_ENTRIES; i++) {
++		if (!within_fw_text(fw, (unsigned long) fw->code_offsets[i])) {
++			pr_info("KPCIMGR: code_offsets[%d] extends beyond image\n", i);
++			return -EINVAL;
++		}
++	}
++
++	fw->symtab_off = 0;
++	fw->strtab_off = 0;
++	fw->n_syms = 0;
++	sh++;
++
++	/* Go through the rest of the ELF sections and save interesting data to the info struct */
++	for (i = 3; i < h->e_shnum; i++, sh++) {
++
++		if (sh->sh_offset > image_size || sh->sh_size > image_size ||
++		    sh->sh_offset + sh->sh_size > image_size) {
++			pr_info("KPCIMGR: ELF section extends beyond end of file\n");
++			return -EINVAL;
++		}
++
++		if (sect_overlaps_text(fw, sh)) {
++			pr_info("KPCIMGR: section %d overlaps .text\n", i);
++			return -EINVAL;
++		}
++
++		/* We execute in place so any sections that would need to be moved are a problem */
++		if (sh->sh_flags & SHF_ALLOC && (sh->sh_addr != sh->sh_offset)) {
++			pr_info("KPCIMGR: ELF section offset and address do not match\n");
++			return -EINVAL;
++		}
++
++		if (sh->sh_flags & SHF_EXECINSTR) {
++			pr_info("KPCIMGR: Found executable section other than .text\n");
++			return -EINVAL;
++		}
++
++		if (strcmp(sh_strtbl + sh->sh_name, ".symtab") == 0) {
++			fw->symtab_off = sh->sh_offset;
++			fw->n_syms = sh->sh_size / sh->sh_entsize;
++		} else if (strcmp(sh_strtbl + sh->sh_name, ".strtab") == 0) {
++			fw->strtab_off = sh->sh_offset;
++		}
++	}
++
++	if (fw->symtab_off == 0 || fw->strtab_off == 0) {
++		pr_info("KPCIMGR: firmware symbol table or string table not found\n");
++		return -EINVAL;
++	}
++
++	flush_icache_range((unsigned long)image + fw->text_off,
++			   (unsigned long)image + fw->text_off + fw->text_size);
++	set_memory_x((unsigned long)image + fw->text_off,
++		     (fw->text_size + PAGE_SIZE - 1) >> PAGE_SHIFT);
++
++	return 0;
++}
++
+ /* 'valid' read returns value of valid field */
+ static ssize_t valid_show(struct device *dev,
+ 			  struct device_attribute *attr,
+@@ -36,9 +289,13 @@ static ssize_t valid_store(struct device *dev,
+ 	if (ks->mod) {
+ 		module_put(ks->mod);
+ 		ks->mod = NULL;
+-		ks->code_base = NULL;
++	} else {
++		module_memfree(ks->code_base);
+ 	}
+ 
++	ks->code_base = NULL;
++	ks->code_size = 0;
++
+ 	pr_info("%s: code unloaded\n", __func__);
+ 	return count;
+ }
+@@ -77,9 +334,15 @@ static ssize_t running_store(struct device *dev,
+ 		if (ks->running) {
+ 			pr_info("%s: kpcimgr is already running\n", __func__);
+ 		} else {
+-			ks->active_port = ffs(kpcimgr_active_port) - 1;
+-			pr_info("%s: kpcimgr will begin running on port %d\n",
+-				__func__, ks->active_port);
++			/*
++			 * For compatibility with older versions of the pciesvc module,
++			 * we are setting active_port_compat to the actual port number.
++			 * For newer versions with bifurcation support, we have  active_port_mask
++			 */
++			ks->active_port_compat = ffs(kpcimgr_active_port) - 1;
++			ks->active_port_mask = kpcimgr_active_port;
++			pr_info("%s: kpcimgr will begin running on port mask %d\n",
++				__func__, ks->active_port_mask);
+ 			kpcimgr_start_running();
+ 		}
+ 		ks->debug = val & 0xfff0;
+@@ -117,6 +380,76 @@ static ssize_t cfgval_store(struct device *dev,
+ 	return count;
+ }
+ 
++static ssize_t range_store(struct device *dev,
++			   struct device_attribute *attr,
++			   const char *buf,
++			   size_t count)
++{
++	unsigned long range_start, flags;
++	kstate_t *ks = get_kstate();
++	struct mem_range_t *mr;
++	ssize_t size;
++	int i = 0;
++
++	if (sscanf(buf, " 0x%lx , 0x%lx ", &range_start, &size) != 2)
++		return -EINVAL;
++
++	/* Remove the range if size == 0 */
++	if (size == 0) {
++		/* Locate target range and remove it */
++		for (i = 0, mr = &ks->mem_ranges[0]; i < ks->nranges; i++, mr++) {
++			if (mr->base == range_start) {
++				spin_lock_irqsave(&kpcimgr_lock, flags);
++				iounmap(mr->vaddr);
++				ks->nranges--;
++				memcpy(mr, &ks->mem_ranges[ks->nranges],
++				       sizeof(struct mem_range_t));
++				spin_unlock_irqrestore(&kpcimgr_lock, flags);
++				return count;
++			}
++		}
++		return -EINVAL;
++	}
++
++	/* size != 0, so start the process to add a new range */
++	if (ks->nranges == NUM_MEMRANGES)
++		return -ENOSPC;
++
++	/* Verify the new range doesn't overlap any existing regions */
++	for (i = 0, mr = &ks->mem_ranges[0]; i < ks->nranges; i++, mr++) {
++		if ((mr->base <= range_start && range_start < mr->end) ||
++			(range_start < mr->base && mr->base < range_start + size))
++			return -EINVAL;
++	}
++
++	mr->base = range_start;
++	mr->end = range_start + size;
++	mr->vaddr = ioremap(range_start, size);
++
++	if (!mr->vaddr)
++		return -ENOMEM;
++
++	ks->nranges++;
++	return count;
++
++}
++
++static ssize_t ranges_show(struct device *dev,
++			   struct device_attribute *attr,
++			   char *buf)
++{
++	kstate_t *ks = get_kstate();
++	struct mem_range_t *range;
++	ssize_t len = 0;
++	int i;
++
++	for (i = 0, range = &ks->mem_ranges[0]; i < ks->nranges; i++, range++)
++		len += sysfs_emit_at(buf, len, "0x%lx,0x%lx\n", range->base,
++				     range->end - range->base);
++
++	return len;
++}
++
+ static ssize_t lib_version_show(struct device *dev,
+ 				struct device_attribute *attr,
+ 				char *buf)
+@@ -148,12 +481,10 @@ static ssize_t command_read(struct file *file, struct kobject *kobj,
+ 
+ 	if (!ks->valid)
+ 		return -ENODEV;
+-	if (ks->code_offsets[K_ENTRY_CMD_READ]) {
+-		cmd_read = ks->code_base + ks->code_offsets[K_ENTRY_CMD_READ];
+-		spin_lock_irqsave(&kpcimgr_lock, flags);
+-		ret = cmd_read(ks, out, off, count, &success);
+-		spin_unlock_irqrestore(&kpcimgr_lock, flags);
+-	}
++	cmd_read = ks->code_base + ks->code_offsets[K_ENTRY_CMD_READ];
++	spin_lock_irqsave(&kpcimgr_lock, flags);
++	ret = cmd_read(ks, out, off, count, &success);
++	spin_unlock_irqrestore(&kpcimgr_lock, flags);
+ 	if (success)
+ 		return ret;
+ 	else
+@@ -171,12 +502,10 @@ static ssize_t command_write(struct file *filp, struct kobject *kobj,
+ 
+ 	if (!ks->valid)
+ 		return -ENODEV;
+-	if (ks->code_offsets[K_ENTRY_CMD_WRITE]) {
+-		cmd_write = ks->code_base + ks->code_offsets[K_ENTRY_CMD_WRITE];
+-		spin_lock_irqsave(&kpcimgr_lock, flags);
+-		ret = cmd_write(ks, buf, off, count, &success);
+-		spin_unlock_irqrestore(&kpcimgr_lock, flags);
+-	}
++	cmd_write = ks->code_base + ks->code_offsets[K_ENTRY_CMD_WRITE];
++	spin_lock_irqsave(&kpcimgr_lock, flags);
++	ret = cmd_write(ks, buf, off, count, &success);
++	spin_unlock_irqrestore(&kpcimgr_lock, flags);
+ 	if (success)
+ 		return ret;
+ 	else
+@@ -231,23 +560,100 @@ static ssize_t kstate_read(struct file *file, struct kobject *kobj,
+ 	return count;
+ }
+ 
++static ssize_t pciesvc_run_store(struct device *dev,
++				 struct device_attribute *attr,
++				 const char *buf,
++				 size_t count)
++{
++	void *image;
++	int ret;
++
++	if (rawdata == NULL || elf_size == 0)
++		return -ENODEV;
++
++	/* Shrink our image size to what was actually read */
++	image = module_alloc(elf_size);
++	if (image == NULL) {
++		pr_err("KPCIMGR: firmware module_alloc\n");
++		return -ENOMEM;
++	}
++
++	memcpy(image, rawdata, elf_size);
++	vfree(rawdata);
++	rawdata = NULL;
++
++	ret = prepare_firmware(image, elf_size);
++
++	if (ret) {
++		module_memfree(image);
++		return ret;
++	}
++
++	ret = load_firmware(image);
++
++	if (ret) {
++		pr_err("KPCIMGR: failed to load firmware\n");
++		module_memfree(image);
++		return ret;
++	}
++
++	return count;
++}
++
++static ssize_t pciesvc_code_write(struct file *filp, struct kobject *kobj,
++				  struct bin_attribute *bin_attr, char *buf, loff_t off,
++				  size_t count)
++{
++
++	if (elf_size + count > KSTATE_CODE_SIZE) {
++		vfree(rawdata);
++		rawdata = NULL;
++		elf_size = 0;
++
++		pr_err("KPCIMGR: firmware write too large\n");
++		return -ENOSPC;
++	}
++
++	/* New firmware is being staged */
++	if (rawdata == NULL) {
++		rawdata = vzalloc(KSTATE_CODE_SIZE);
++		if (rawdata == NULL) {
++			pr_err("KPCIMGR: staging alloc\n");
++			return -ENOMEM;
++		}
++			elf_size = 0;
++		}
++
++	memcpy(rawdata + off, buf, count);
++	elf_size += count;
++
++	return count;
++}
++
+ static DEVICE_ATTR_RW(valid);
+ static DEVICE_ATTR_RW(running);
+ static DEVICE_ATTR_RW(cfgval);
++static DEVICE_ATTR_WO(pciesvc_run);
++static DEVICE_ATTR_WO(range);
++static DEVICE_ATTR_RO(ranges);
+ static DEVICE_ATTR_RO(lib_version);
+ static DEVICE_ATTR_RO(mgr_version);
+ static DEVICE_INT_ATTR(active_port, 0644, kpcimgr_active_port);
+ static BIN_ATTR_RO(kstate, sizeof(kstate_t));
+ static BIN_ATTR_RW(event_queue, EVENT_SIZE);
+ static BIN_ATTR_RW(command, CMD_SIZE);
++static BIN_ATTR_WO(pciesvc_code, KSTATE_CODE_SIZE);
+ 
+ static struct attribute *dev_attrs[] = {
+ 	&dev_attr_valid.attr,
+ 	&dev_attr_running.attr,
+ 	&dev_attr_cfgval.attr,
++	&dev_attr_range.attr,
++	&dev_attr_ranges.attr,
+ 	&dev_attr_active_port.attr.attr,
+ 	&dev_attr_lib_version.attr,
+ 	&dev_attr_mgr_version.attr,
++	&dev_attr_pciesvc_run.attr,
+ 	NULL,
+ };
+ 
+@@ -255,6 +661,7 @@ static struct bin_attribute *dev_bin_attrs[] = {
+ 	&bin_attr_kstate,
+ 	&bin_attr_event_queue,
+ 	&bin_attr_command,
++	&bin_attr_pciesvc_code,
+ 	NULL,
+ };
+ 
+@@ -265,13 +672,20 @@ const struct attribute_group kpci_attr_group = {
+ 
+ void kpcimgr_sysfs_setup(struct platform_device *pfdev)
+ {
++	static struct notifier_block panic_notifier = {
++			.notifier_call = firmware_panic,
++	};
++
+ 	if (sysfs_create_group(&pfdev->dev.kobj, &kpci_attr_group)) {
+ 		pr_err("KPCIMGR:sysfs_create_group failed\n");
+ 		return;
+ 	}
+ 
+ 	if (sysfs_create_link(kernel_kobj, &pfdev->dev.kobj, "kpcimgr")) {
+-		pr_err("KPCIMGR: failed top create sysfs link\n");
++		pr_err("KPCIMGR: failed to create sysfs link\n");
+ 		return;
+ 	}
++
++	/* register panic notifier */
++	atomic_notifier_chain_register(&panic_notifier_list, &panic_notifier);
+ }
+-- 
+2.25.1
+

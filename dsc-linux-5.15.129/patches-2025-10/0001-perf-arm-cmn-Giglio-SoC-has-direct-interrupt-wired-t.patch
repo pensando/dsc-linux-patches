@@ -1,0 +1,30 @@
+From cc305ebedb531792146e38e48ae4a14a1ab701dd Mon Sep 17 00:00:00 2001
+From: Brad Larson <bradley.larson@amd.com>
+Date: Wed, 22 Oct 2025 10:09:06 -0700
+Subject: [PATCH 1/7] perf/arm-cmn: Giglio SoC has direct interrupt wired to
+ GIC
+
+The workaround using the PRP interrupt chain only applies
+to the Salina SoC.
+
+Signed-off-by: Brad Larson <bradley.larson@amd.com>
+---
+ drivers/perf/arm-cmn.c | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/drivers/perf/arm-cmn.c b/drivers/perf/arm-cmn.c
+index 12f760afd798..a7b253fcf744 100644
+--- a/drivers/perf/arm-cmn.c
++++ b/drivers/perf/arm-cmn.c
+@@ -1216,7 +1216,7 @@ static int arm_cmn_init_irqs(struct arm_cmn *cmn)
+ 				goto next;
+ 			}
+ 		}
+-#if defined(CONFIG_ARCH_PENSANDO_GIGLIO_SOC) || defined(CONFIG_ARCH_PENSANDO_SALINA_SOC)
++#if defined(CONFIG_ARCH_PENSANDO_SALINA_SOC)
+ 		err = devm_request_irq(cmn->dev, irq, arm_cmn_handle_irq,
+ 				       IRQF_NOBALANCING | IRQF_NO_THREAD | IRQF_SHARED,
+ 				       dev_name(cmn->dev), &cmn->dtc[i]);
+-- 
+2.25.1
+

@@ -1,0 +1,39 @@
+From d9bf29cc400fbcd428fdc5288bbf6d1109bf97ba Mon Sep 17 00:00:00 2001
+From: Brad Larson <bradley.larson@amd.com>
+Date: Wed, 22 Oct 2025 10:22:44 -0700
+Subject: [PATCH 3/7] Fix gcc version 11.3.1 compile warnings
+
+Signed-off-by: Brad Larson <bradley.larson@amd.com>
+---
+ drivers/i2c/busses/i2c-rd1173.c | 1 +
+ drivers/soc/pensando/sbus.c     | 2 +-
+ 2 files changed, 2 insertions(+), 1 deletion(-)
+
+diff --git a/drivers/i2c/busses/i2c-rd1173.c b/drivers/i2c/busses/i2c-rd1173.c
+index 999ec970d47d..7e72828433bc 100644
+--- a/drivers/i2c/busses/i2c-rd1173.c
++++ b/drivers/i2c/busses/i2c-rd1173.c
+@@ -687,6 +687,7 @@ static int rd1173_xfer(struct i2c_adapter *i2c_adap, struct i2c_msg *msgs, int n
+ 	case RD1173_STAT_ABORT_ACK:
+ 		rd1173_reset(i2c);
+ 		rc = -EAGAIN;
++		break;
+ 	default:
+ 		rc = -EAGAIN;
+ 	}
+diff --git a/drivers/soc/pensando/sbus.c b/drivers/soc/pensando/sbus.c
+index 610258bfdf1a..9cebe1fceb6f 100644
+--- a/drivers/soc/pensando/sbus.c
++++ b/drivers/soc/pensando/sbus.c
+@@ -124,7 +124,7 @@ static uint32_t reg_smc_read(void *addr)
+ 				  0, 0, &res);
+ 
+ 	if (res.a0 != PEN_SBUS_SMC_ERR_NONE) {
+-		pr_err("pensando-sbus: read failed! ret=%d\n", res.a0);
++		pr_err("pensando-sbus: read failed! ret=%ld\n", res.a0);
+ 		return (uint32_t)-1;
+ 	}
+ 
+-- 
+2.25.1
+

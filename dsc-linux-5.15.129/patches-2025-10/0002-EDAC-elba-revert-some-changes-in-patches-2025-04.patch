@@ -1,0 +1,44 @@
+From 0c0c8e167874b8d8519f1deb3f2d964598867436 Mon Sep 17 00:00:00 2001
+From: Brad Larson <bradley.larson@amd.com>
+Date: Wed, 22 Oct 2025 10:18:57 -0700
+Subject: [PATCH 2/7] EDAC/elba: revert some changes in patches-2025-04
+
+Revert MODULE_LICENSE and pr_crit() changes in patches-2025-04
+0005-EDAC-elba-Support-AMD-Pensando-Giglio-SoC.patch
+
+Signed-off-by: Brad Larson <bradley.larson@amd.com>
+---
+ drivers/edac/elba_edac.c | 6 +++---
+ 1 file changed, 3 insertions(+), 3 deletions(-)
+
+diff --git a/drivers/edac/elba_edac.c b/drivers/edac/elba_edac.c
+index b0e91cd261e6..911b014522fe 100644
+--- a/drivers/edac/elba_edac.c
++++ b/drivers/edac/elba_edac.c
+@@ -336,7 +336,7 @@ static int elba_edac_mc_panic_notifier(struct notifier_block *nb,
+ 			if (elba_edac_mc_u_poll(mcp, chan, subchan, int_stat,
+ 						&res)) {
+ 				if (mcp->is_ddr5)
+-					pr_crit(KERN_CRIT "EDAC MC0: %u UE %s "
++					pr_crit("EDAC MC0: %u UE %s "
+ 						"on unknown memory (channel:%u "
+ 						"slot:%u page:0x%llx "
+ 						"offset:0x%llx "
+@@ -347,7 +347,7 @@ static int elba_edac_mc_panic_notifier(struct notifier_block *nb,
+ 						res.bus_addr & ~PAGE_MASK,
+ 						res.synd);
+ 				else
+-					pr_crit(KERN_CRIT "EDAC MC0: %u UE %s "
++					pr_crit("EDAC MC0: %u UE %s "
+ 						"on unknown memory (channel:%u "
+ 						"page:0x%llx "
+ 						"offset:0x%llx "
+@@ -570,4 +570,4 @@ module_platform_driver(elba_edac_mc_driver);
+ 
+ MODULE_DESCRIPTION("AMD Pensando Elba/Giglio platform EDAC memory controller driver");
+ MODULE_AUTHOR("Advanced Micro Devices, Inc.");
+-MODULE_LICENSE("GPL");
++MODULE_LICENSE("GPL v2");
+-- 
+2.25.1
+

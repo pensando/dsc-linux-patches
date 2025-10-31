@@ -1,0 +1,28 @@
+From 7764c07c4399b8a0a4794bfdc3fc9c5867819ea6 Mon Sep 17 00:00:00 2001
+From: Brad Larson <bradley.larson@amd.com>
+Date: Thu, 30 Oct 2025 18:32:19 -0700
+Subject: [PATCH 5/7] mmc: sdhci-cadence: Fix byte enable GENMASK usage
+
+Elba byte enables are bits 6:3 of priv->ctrl_addr
+
+Signed-off-by: Brad Larson <bradley.larson@amd.com>
+---
+ drivers/mmc/host/sdhci-cadence.c | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/drivers/mmc/host/sdhci-cadence.c b/drivers/mmc/host/sdhci-cadence.c
+index 34ad879f054b..a9ff65048d75 100644
+--- a/drivers/mmc/host/sdhci-cadence.c
++++ b/drivers/mmc/host/sdhci-cadence.c
+@@ -368,7 +368,7 @@ static void elba_priv_writel(struct sdhci_cdns_priv *priv, u32 val,
+ 	unsigned long flags;
+ 
+ 	spin_lock_irqsave(&priv->wrlock, flags);
+-	writel(GENMASK(7, 3), priv->ctl_addr);
++	writel(GENMASK(6, 3), priv->ctl_addr);
+ 	writel(val, reg);
+ 	spin_unlock_irqrestore(&priv->wrlock, flags);
+ }
+-- 
+2.25.1
+
