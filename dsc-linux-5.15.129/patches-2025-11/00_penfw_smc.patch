@@ -1,0 +1,143 @@
+From e01581d1fbfa0a263846bcbefb8d6606ed8200ff Mon Sep 17 00:00:00 2001
+From: rahshekh <rahulshekhar@pensando.io>
+Date: Fri, 14 Nov 2025 12:11:49 -0800
+Subject: [PATCH] Add support for secure interrupts smc call and deprecate
+ atomic axi filter smc call
+
+Signed-off-by: rahshekh <rahulshekhar@pensando.io>
+---
+ drivers/soc/pensando/penfw.h     | 14 +++++++
+ drivers/soc/pensando/penfw_smc.c | 64 +++++++++++++++++++++++++++++++-
+ 2 files changed, 77 insertions(+), 1 deletion(-)
+
+diff --git a/drivers/soc/pensando/penfw.h b/drivers/soc/pensando/penfw.h
+index 2a5ca28c06bf..a142651b10cb 100644
+--- a/drivers/soc/pensando/penfw.h
++++ b/drivers/soc/pensando/penfw.h
+@@ -31,6 +31,7 @@ enum penfw_opcodes {
+ 	PENFW_OP_GET_MMA_CLK,
+ 	PENFW_OP_SET_ETH_PLL_CLK,
+ 	PENFW_OP_ATOMIC_INC_AXI_LIMITER,
++	PENFW_OP_GET_SECURE_INTERRUPTS,
+ 	PENFW_OPCODE_MAX,
+ };
+ 
+@@ -58,6 +59,19 @@ struct penfw_time_attestation {
+ 	} signature;
+ };
+ 
++struct penfw_intrreg {
++	// input
++	uint64_t addr;
++	// output
++	uint32_t value;
++	uint32_t valid;
++};
++
++struct penfw_secure_intrs {
++	uint32_t num_intr_regs;
++	struct penfw_intrreg *intr_regs;
++};
++
+ typedef struct penfw_svc_args_s {
+ 	uint64_t func_id;
+ 	uint64_t sub_func_id;
+diff --git a/drivers/soc/pensando/penfw_smc.c b/drivers/soc/pensando/penfw_smc.c
+index 0013f92630cb..331579627e0c 100644
+--- a/drivers/soc/pensando/penfw_smc.c
++++ b/drivers/soc/pensando/penfw_smc.c
+@@ -60,6 +60,8 @@ static const char *_opcode_to_str(uint8_t opcode)
+ 		return "PENFW_OP_SET_ETH_PLL_CLK";
+ 	case PENFW_OP_ATOMIC_INC_AXI_LIMITER:
+ 		return "PENFW_OP_ATOMIC_INC_AXI_LIMITER";
++	case PENFW_OP_GET_SECURE_INTERRUPTS:
++		return "PENFW_OP_GET_SECURE_INTERRUPTS";
+ 	default:
+ 		return "PENFW_OP_UNKNOWN";
+ 	}
+@@ -173,6 +175,61 @@ void penfw_smc_attest_get_time(struct penfw_call_args *args)
+ 	memset(penfwdata, 0, PAGE_SIZE);
+ }
+ 
++/*
++ * a1 = smc op (PENFW_OP_GET_SECURE_INTERRUPTS)
++ * a2 = pointer to user provided interrupt structure.
++ */
++void penfw_smc_get_secure_intrs(struct penfw_call_args *args)
++{
++	uint32_t i;
++	uint32_t len = 0;
++	struct arm_smccc_res res = {0};
++	struct penfw_secure_intrs u_intrs;
++	struct penfw_secure_intrs *intrs = penfwdata;
++	struct penfw_intrreg *intr_regs_phys;
++	struct penfw_intrreg *intr_regs = (struct penfw_intrreg *)((uint8_t *)penfwdata + sizeof(struct penfw_secure_intrs));
++	void __user *user_intrs_addr = (void  __user *)args->a2;
++
++	// copied struct from user space
++	if (copy_from_user(&u_intrs, user_intrs_addr, sizeof(struct penfw_secure_intrs))) {
++		args->a0 = -1;
++		return;
++	}
++
++	intrs->num_intr_regs = u_intrs.num_intr_regs;
++	// now copy the array of interrupts
++	len = sizeof(struct penfw_intrreg) * u_intrs.num_intr_regs;
++	if (len > PAGE_SIZE) {
++		args->a0 = -1;
++		return;
++	}
++	if (copy_from_user(intr_regs, u_intrs.intr_regs, len)) {
++		args->a0 = -1;
++		return;
++	}
++
++	intr_regs_phys = (struct penfw_intrreg *)(penfwdata_phys + sizeof(struct penfw_secure_intrs));
++	intrs->intr_regs = intr_regs_phys;
++
++	arm_smccc_smc(PENFW_CALL_FID, PENFW_OP_GET_SECURE_INTERRUPTS,
++			(uint64_t)penfwdata_phys, 0, 0, 0, 0, 0, &res);
++
++	if (res.a0 == 0) {
++		if (copy_to_user(u_intrs.intr_regs, intr_regs, len)) {
++			args->a0 = -5;
++			return;
++		}
++	}
++
++	args->a0 = res.a0;
++	args->a1 = res.a1;
++	args->a2 = res.a2;
++	args->a3 = res.a3;
++
++	/* zero out interrupts data after copying to userspace */
++	memset(penfwdata, 0, PAGE_SIZE);
++}
++
+ void penfw_smc(struct penfw_call_args *args)
+ {
+ 	struct arm_smccc_res res = {0};
+@@ -197,7 +254,6 @@ void penfw_smc(struct penfw_call_args *args)
+ 	case PENFW_OP_GET_RANDOM:
+ 	case PENFW_OP_GET_MMA_CLK:
+ 	case PENFW_OP_SET_ETH_PLL_CLK:
+-	case PENFW_OP_ATOMIC_INC_AXI_LIMITER:
+ 		arm_smccc_smc(PENFW_CALL_FID, args->a1, args->a2, args->a3, 0, 0,
+ 						0, 0, &res);
+ 		// copy return vals
+@@ -212,6 +268,12 @@ void penfw_smc(struct penfw_call_args *args)
+ 	case PENFW_OP_ATTEST_GET_TIME:
+ 		penfw_smc_attest_get_time(args);
+ 		break;
++	case PENFW_OP_GET_SECURE_INTERRUPTS:
++		penfw_smc_get_secure_intrs(args);
++		break;
++	case PENFW_OP_ATOMIC_INC_AXI_LIMITER:
++		// deprecated, do nothing
++		break;
+ 	default:
+ 		break;
+ 	}
+-- 
+2.25.1
+
