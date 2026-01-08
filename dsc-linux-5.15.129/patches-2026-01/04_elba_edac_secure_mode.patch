@@ -84,7 +84,7 @@ index 911b014522fe..7bb1dcf3f0d5 100644
 +{
 +	struct arm_smccc_res res = {0};
 +
-+	arm_smccc_smc(PEN_SECREG_SMC_CALL_FID,  
++	arm_smccc_smc(PEN_SECREG_SMC_CALL_FID,
 +				PEN_SECREG_SMC_REG_WRITE, (uint64_t)addr,
 +				val, 0, 0, 0, 0, &res);
 +
