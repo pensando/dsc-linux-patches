@@ -1,0 +1,292 @@
+From dd845342f3d23f425c6c06846b00d5202bd40571 Mon Sep 17 00:00:00 2001
+From: himehta <himehta@amd.com>
+Date: Tue, 6 Jan 2026 18:01:57 -0800
+Subject: [PATCH] drivers/soc/pensando/sbus: Secure mode support
+
+Add generic pen_secure APIs for sbus driver to use to access secure
+sbus registers.
+
+In future other drivers can also use these APIs for other supported
+secure registers.
+
+Signed-off-by: himehta <himehta@amd.com>
+---
+ drivers/soc/pensando/Makefile     |  2 +-
+ drivers/soc/pensando/pen_secure.c | 85 +++++++++++++++++++++++++++++++
+ drivers/soc/pensando/pen_secure.h | 27 ++++++++++
+ drivers/soc/pensando/penfw_smc.c  |  1 -
+ drivers/soc/pensando/sbus.c       | 77 ++--------------------------
+ 5 files changed, 117 insertions(+), 75 deletions(-)
+ create mode 100644 drivers/soc/pensando/pen_secure.c
+ create mode 100644 drivers/soc/pensando/pen_secure.h
+
+diff --git a/drivers/soc/pensando/Makefile b/drivers/soc/pensando/Makefile
+index 6a3683e5a314..ef5ce5a6bab5 100644
+--- a/drivers/soc/pensando/Makefile
++++ b/drivers/soc/pensando/Makefile
+@@ -1,7 +1,7 @@
+ #
+ # Pensando SoC drivers
+ #
+-obj-y += cap_soc.o
++obj-y += cap_soc.o pen_secure.o
+ 
+ CFLAGS_cap_mem.o := -I$(src)
+ ccflags-$(CONFIG_PENSANDO_SOC_PCIE) += -DPEN_COMPAT_V2
+diff --git a/drivers/soc/pensando/pen_secure.c b/drivers/soc/pensando/pen_secure.c
+new file mode 100644
+index 000000000000..d7274f854be4
+--- /dev/null
++++ b/drivers/soc/pensando/pen_secure.c
+@@ -0,0 +1,85 @@
++/*
++ * Copyright (c) 2022, Pensando Systems Inc.
++ */
++
++#include <linux/kernel.h>
++#include <linux/init.h>
++#include <linux/module.h>
++#include <linux/kdev_t.h>
++#include <linux/fs.h>
++#include <linux/cdev.h>
++#include <linux/device.h>
++#include <linux/slab.h>
++#include <linux/uaccess.h>
++#include <linux/ioctl.h>
++#include <linux/io.h>
++#include <linux/spinlock.h>
++#include <linux/of.h>
++#include <linux/of_address.h>
++#include <linux/of_platform.h>
++#include <linux/delay.h>
++#include <linux/arm-smccc.h>
++#include <asm/ptrace.h>
++#include <linux/of_platform.h>
++#include "pen_secure.h"
++
++
++static bool secure_mode = false;
++static bool secure_mode_init = false;
++
++void pen_secure_regwrite(void __iomem *addr, uint32_t val)
++{
++	struct arm_smccc_res res = {0};
++
++	arm_smccc_smc(PEN_SECREG_SMC_CALL_FID,
++		      PEN_SECREG_SMC_REG_WRITE, (uint64_t)addr,
++		      val, 0, 0, 0, 0, &res);
++
++	if (res.a0 != PEN_SECREG_SMC_ERR_NONE) {
++		pr_err("pensando-secreg: failed to write data! ret=%d\n", (int)res.a0);
++	}
++}
++
++uint32_t pen_secure_regread(void __iomem *addr)
++{
++	struct arm_smccc_res res = {0};
++
++	arm_smccc_smc(PEN_SECREG_SMC_CALL_FID,
++		      PEN_SECREG_SMC_REG_READ, (uint64_t)addr,
++		      0, 0, 0, 0, 0, &res);
++
++	if (res.a0 != PEN_SECREG_SMC_ERR_NONE) {
++		pr_err("pensando-secreg: read failed! ret=%d\n", (int)res.a0);
++		return (uint32_t)-1;
++	}
++
++	/* result passed back in a1 reg */
++	return (uint32_t)res.a1;
++}
++
++static int of_get_secure_mode(void)
++{
++	struct device_node *of_secure;
++	int enable = 0;
++
++	/* Get secure mode from OF */
++	of_secure = of_find_node_by_path("/secure_mode");
++	if (of_secure) {
++		if (of_property_read_u32(of_secure, "enable", &enable)) {
++			return 0; /* non-secure */
++		} else {
++			return enable;
++		}
++	}
++	return 0; /* non-secure */
++}
++
++bool pen_secure_mode_enabled(void)
++{
++	if (!secure_mode_init) {
++		secure_mode = of_get_secure_mode();
++		secure_mode_init = true;
++	}
++
++	return secure_mode;
++}
+diff --git a/drivers/soc/pensando/pen_secure.h b/drivers/soc/pensando/pen_secure.h
+new file mode 100644
+index 000000000000..18da244b58a3
+--- /dev/null
++++ b/drivers/soc/pensando/pen_secure.h
+@@ -0,0 +1,27 @@
++/* SPDX-License-Identifier: GPL-2.0 */
++/*
++ * Copyright (c) 2025, Advanced Micro Devices, Inc.
++ */
++
++#ifndef _PEN_SECURE_H_
++#define _PEN_SECURE_H_
++
++/* Refer Pensando BL31 Function Registry.docx */
++#define PEN_SECREG_SMC_CALL_FID       0xC200000B
++
++enum pen_sbus_smc_sub_fid {
++    PEN_SECREG_SMC_REG_READ = 0,
++    PEN_SECREG_SMC_REG_WRITE = 1,
++};
++
++enum pen_sbus_smc_err_codes {
++    PEN_SECREG_SMC_ERR_NONE = 0,
++    PEN_SECREG_SMC_ERR_INVALID = -1,
++    PEN_SECREG_SMC_ERR_UNSUPPORTED = -2,
++};
++
++uint32_t pen_secure_regread(void *addr);
++void pen_secure_regwrite(void *addr, uint32_t val);
++bool pen_secure_mode_enabled(void);
++
++#endif /* _PEN_SECURE_H_ */
+diff --git a/drivers/soc/pensando/penfw_smc.c b/drivers/soc/pensando/penfw_smc.c
+index 331579627e0c..aadd21d470f9 100644
+--- a/drivers/soc/pensando/penfw_smc.c
++++ b/drivers/soc/pensando/penfw_smc.c
+@@ -181,7 +181,6 @@ void penfw_smc_attest_get_time(struct penfw_call_args *args)
+  */
+ void penfw_smc_get_secure_intrs(struct penfw_call_args *args)
+ {
+-	uint32_t i;
+ 	uint32_t len = 0;
+ 	struct arm_smccc_res res = {0};
+ 	struct penfw_secure_intrs u_intrs;
+diff --git a/drivers/soc/pensando/sbus.c b/drivers/soc/pensando/sbus.c
+index 9cebe1fceb6f..b14cc4101d5f 100644
+--- a/drivers/soc/pensando/sbus.c
++++ b/drivers/soc/pensando/sbus.c
+@@ -21,6 +21,7 @@
+ #include <linux/delay.h>
+ #include <linux/arm-smccc.h>
+ #include <asm/ptrace.h>
++#include "pen_secure.h"
+ 
+ #define MAX_DEVICES			4
+ #define SBUS_SBUS_RST			0x20
+@@ -29,20 +30,6 @@
+ #define SBUS_INDIR_DATA_ADDR_LSB	8
+ #define SBUS_INDIR_DATA_COMMAND_LSB	16
+ 
+-/* Refer Pensando BL31 Function Registry.docx */
+-#define PEN_SBUS_SMC_CALL_FID       0xC200000B
+-
+-enum pen_sbus_smc_sub_fid {
+-    PEN_SBUS_SMC_REG_READ = 0,
+-    PEN_SBUS_SMC_REG_WRITE = 1,
+-};
+-
+-enum pen_sbus_smc_err_codes {
+-    PEN_SBUS_SMC_ERR_NONE = 0,
+-    PEN_SBUS_SMC_ERR_INVALID = -1,
+-    PEN_SBUS_SMC_ERR_UNSUPPORTED = -2,
+-};
+-
+ static dev_t sbus_dev;
+ static struct class *dev_class;
+ static int dev_inst;
+@@ -93,45 +80,6 @@ static uint32_t reg_read(void *a)
+ 	return ioread32(addr);
+ }
+ 
+-static void reg_smc_write(void *addr, uint32_t val)
+-{
+-	struct arm_smccc_res res = {0};
+-	struct pt_regs args = {0};
+-
+-	args.regs[0] = PEN_SBUS_SMC_CALL_FID;
+-	args.regs[1] = PEN_SBUS_SMC_REG_WRITE;
+-	args.regs[2] = (uint64_t)addr;
+-	args.regs[3] = val;
+-
+-	arm_smccc_smc(args.regs[0], args.regs[1], args.regs[2], args.regs[3], 0, 0,
+-				  0, 0, &res);
+-
+-	if (res.a0 != PEN_SBUS_SMC_ERR_NONE) {
+-		pr_err("pensando-sbus: failed to write data! ret=%d\n", (int)res.a0);
+-	}
+-}
+-
+-static uint32_t reg_smc_read(void *addr)
+-{
+-	struct arm_smccc_res res = {0};
+-	struct pt_regs args = {0};
+-
+-	args.regs[0] = PEN_SBUS_SMC_CALL_FID;
+-	args.regs[1] = PEN_SBUS_SMC_REG_READ;
+-	args.regs[2] = (uint64_t)addr;
+-
+-	arm_smccc_smc(args.regs[0], args.regs[1], args.regs[2], 0, 0, 0,
+-				  0, 0, &res);
+-
+-	if (res.a0 != PEN_SBUS_SMC_ERR_NONE) {
+-		pr_err("pensando-sbus: read failed! ret=%ld\n", res.a0);
+-		return (uint32_t)-1;
+-	}
+-
+-	/* result passed back in a1 reg */
+-	return (uint32_t)res.a1;
+-}
+-
+ static void sbus_write(struct sbus_ioctl_args param,
+ 		       struct sbusdev_info *sbus_ring)
+ {
+@@ -261,27 +209,10 @@ static struct sbus_reg_ops ns_rops = {
+  * Register operation structure (secure)
+  */
+ static struct sbus_reg_ops sec_rops = {
+-	.read = reg_smc_read,
+-	.write = reg_smc_write,
++	.read = pen_secure_regread,
++	.write = pen_secure_regwrite,
+ };
+ 
+-static int of_get_secure_mode(void)
+-{
+-	struct device_node *of_secure_mode;
+-	int enable = 0;
+-
+-	/* Get secure mode from OF */
+-	of_secure_mode = of_find_node_by_path("/secure_mode");
+-	if (of_secure_mode) {
+-		if (of_property_read_u32(of_secure_mode, "enable", &enable)) {
+-			return 0; /* non-secure */
+-		} else {
+-			return enable;
+-		}
+-	}
+-	return 0; /* non-secure */
+-}
+-
+ /*
+  * Module Init function
+  */
+@@ -310,7 +241,7 @@ static int sbus_probe(struct platform_device *pdev)
+ 	sbus_ring->pdev = pdev;
+ 	platform_set_drvdata(pdev, sbus_ring);
+ 
+-	is_secure = of_get_secure_mode();
++	is_secure = pen_secure_mode_enabled();
+ 	res = platform_get_resource(pdev, IORESOURCE_MEM, 0);
+ 	if (is_secure) {
+ 		sbus_ring->sbus_indir = (void *)res->start;
+-- 
+2.25.1
+
