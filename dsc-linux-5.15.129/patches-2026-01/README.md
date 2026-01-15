@@ -49,3 +49,9 @@ Elba edac registers are secure register and are not accessible
 directly when secure-mode is turned on. Use SMC call to read/write
 edac registers.
 ```
+**05_sbus_secure_mode_dhs.patch**<br>
+```
+drivers/soc/pensando/sbus: Secure mode support.
+
+Access dhs registers directly as they are not secure registers.
+```
