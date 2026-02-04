@@ -9,6 +9,8 @@ Fix clearing RUNNING flash in success_store() when in secure-mode.
 Update bsm.val appropriately so that getters of device attributes
 work correctly.
 
+Co-developed-by: Maciej S. Szmigiero <maciej.szmigiero@oracle.com>
+Signed-off-by: Maciej S. Szmigiero <maciej.szmigiero@oracle.com>
 Signed-off-by: himehta <himehta@amd.com>
 ---
  drivers/soc/pensando/cap_bsm.c | 42 ++++++++++++++++++----------------
