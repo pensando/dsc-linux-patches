@@ -11,3 +11,10 @@ Fix clearing RUNNING flash in success_store() when in secure-mode.
 Update bsm.val appropriately so that getters of device attributes
 work correctly.
 ```
+**01_penfw_pcie_serdes_fw_download.patch**<br>
+```
+drivers/soc/pensando/penfw: Add support for pcie serdes fw download.
+
+PCIe serdes fw download needs secure register access.
+In secure-mode, use SMC to download serdes firmware.
+```
