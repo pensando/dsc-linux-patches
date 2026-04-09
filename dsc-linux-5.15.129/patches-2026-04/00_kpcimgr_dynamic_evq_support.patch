@@ -1,0 +1,319 @@
+From 739c8e07c067e9d66f589c51cba75de33ad095f2 Mon Sep 17 00:00:00 2001
+From: rahshekh <rahulshekhar@pensando.io>
+Date: Thu, 9 Apr 2026 10:39:00 -0700
+Subject: [PATCH] drivers/soc/pensando/kpcimgr: Add kpcimgr dyn-evq support
+
+Enhanced pcie event infra using cache coherent memory region.
+Support per lif quotas and missed event handling.
+Events are directly consumed by nicmgr (pciemgr_if), log messages continue
+to be sent to pcimgrd
+
+Summary for changes:
+- elba hnic dts contains index, size and memory address of region
+  to be used for event ring
+- Integration with pcie-evq service module to pass events to userspace
+- Additional device file and epoll support for the new ring
+
+Signed-off-by: Chaitanya Huilgol <chaitanya.huilgol@amd.com>
+Co-authored-by: Darshan Prajapati <41161552+iDarshan@users.noreply.github.com>
+Signed-off-by: rahshekh <rahulshekhar@pensando.io>
+---
+ arch/arm64/boot/dts/pensando/elba.dtsi |   4 +-
+ drivers/soc/pensando/kpcimgr.c         | 127 ++++++++++++++++++++++++-
+ drivers/soc/pensando/kpcimgr_api.h     |  14 +++
+ 3 files changed, 141 insertions(+), 4 deletions(-)
+
+diff --git a/arch/arm64/boot/dts/pensando/elba.dtsi b/arch/arm64/boot/dts/pensando/elba.dtsi
+index 39dee4c8a99a..c50886aadf02 100644
+--- a/arch/arm64/boot/dts/pensando/elba.dtsi
++++ b/arch/arm64/boot/dts/pensando/elba.dtsi
+@@ -286,10 +286,12 @@ kpcimgr@20000000 {
+ 			msi-parent = <&its 0xf>;
+ 			shmem-index = <3>;
+ 			hwmem-index = <2>;
++			dynevq-index = <4>;
+ 			reg =  <0x0 0x20000000 0x0 0x00380000   /* PXB Base */
+ 				0x0 0x61800000 0x0 0x00101000   /* Interrupts */
+ 				0x0 0xc4000000 0x0 0x01000000   /* HWMEM */
+-				0x0 0x0        0x0 0x02000000>; /* SHMEM */
++				0x0 0x0        0x0 0x02000000   /* SHMEM */
++				0x0 0xc0000000 0x0 0x00800000>; /* Dynamic Event Queue (8MB) */
+ 		};
+ 
+ 		sbus@307c24a8 {
+diff --git a/drivers/soc/pensando/kpcimgr.c b/drivers/soc/pensando/kpcimgr.c
+index 3ab0ab6133ae..17b6ff61ffdb 100644
+--- a/drivers/soc/pensando/kpcimgr.c
++++ b/drivers/soc/pensando/kpcimgr.c
+@@ -29,6 +29,9 @@ static DECLARE_WAIT_QUEUE_HEAD(event_queue);
+ #define MSI_INDEX(desc)			((desc)->platform.msi_index)
+ #define MSI_FOR_EACH_DESC(desc, dev)	for_each_msi_entry((desc), (dev))
+ 
++kpcimgr_dyn_evq_state_t dyn_evq_state;
++static DECLARE_WAIT_QUEUE_HEAD(dyn_event_queue);
++
+ /*
+  * get_uart_addr
+  *
+@@ -172,6 +175,7 @@ void kpcimgr_stop_running(void)
+ 	}
+ 	spin_unlock_irqrestore(&kpcimgr_lock, flags);
+ 
++    kpci_memset(&dyn_evq_state, 0, sizeof(kpcimgr_dyn_evq_state_t));
+ 	ks->running = 0;
+ }
+ 
+@@ -293,6 +297,74 @@ static int open_kpcimgr(struct inode *inode, struct file *filp)
+ 		return -ENODEV;
+ }
+ 
++/*
++ * kpcimgr evq device operations
++ */
++
++static int open_kpcimgr_evq(struct inode *inode, struct file *filp)
++{
++	kstate_t *ks = get_kstate();
++
++	if (ks->valid == KSTATE_MAGIC) {
++		return 0;
++    } else {
++        pr_info("KPCIMGR open fail on kpcimgr_evq\n");
++		return -ENODEV;
++    }
++}
++
++/*
++ * pciemgr_if client wants to select() on /dev/kpcimgr to discover
++ * if there are events in the event queue.
++ */
++static unsigned int
++poll_kpcimgr_evq(struct file *file, poll_table *wait)
++{
++	u32 *ring_pi, *ring_ci, *miss_evt_pi, *miss_evt_ci;
++
++	poll_wait(file, &dyn_event_queue, wait);
++
++	ring_pi = READ_ONCE(dyn_evq_state.ring_pi);
++	ring_ci = READ_ONCE(dyn_evq_state.ring_ci);
++	miss_evt_pi = READ_ONCE(dyn_evq_state.miss_evt_pi);
++	miss_evt_ci = READ_ONCE(dyn_evq_state.miss_evt_ci);
++
++	if (ring_pi && ring_ci && miss_evt_pi && miss_evt_ci) {
++		if (READ_ONCE(*ring_pi) != READ_ONCE(*ring_ci) ||
++			READ_ONCE(*miss_evt_pi) != READ_ONCE(*miss_evt_ci))
++				return POLLIN | POLLRDNORM;
++	}
++	return 0;
++}
++
++static void wake_up_dyn_event_queue(void)
++{
++	wake_up_interruptible(&dyn_event_queue);
++}
++
++static void setup_dyn_evq_state(uint64_t arg1)
++{
++    kpcimgr_dyn_evq_state_t *rp;
++
++    pr_info("KPCIMGR setup dyn_evq state\n");
++    rp = (kpcimgr_dyn_evq_state_t*)arg1;
++    if (!rp) {
++        pr_err("KPCIMGR error null arg for dynamic evq param\n");
++        return;
++    }
++
++    if (!rp->ring_pi || !rp->ring_ci || !rp->miss_evt_pi
++        || !rp->miss_evt_ci) {
++        pr_err("KPCIMGR error null dynamic evq params\n");
++        return;
++    }
++
++	WRITE_ONCE(dyn_evq_state.ring_pi, rp->ring_pi);
++	WRITE_ONCE(dyn_evq_state.ring_ci, rp->ring_ci);
++	WRITE_ONCE(dyn_evq_state.miss_evt_pi, rp->miss_evt_pi);
++	WRITE_ONCE(dyn_evq_state.miss_evt_ci, rp->miss_evt_ci);
++}
++
+ /*
+  * Examine code and look for calls (BL insn) that are beyond the bounds of the text section, and
+  * data references (ADRP) to memory outside of the image. If any are found, report them and return
+@@ -372,6 +444,14 @@ static int feature_check(long features)
+ 		return -1;
+ 	}
+ 
++	if ((ks->features & FLAG_DYN_EVQ) == 0 && (features & FLAG_DYN_EVQ)) {
++        /* module supports dynamic-evq but kpcimgr does not, this is allowed in
++         * upgrade scenarios where kernel has not been updated. kpcimgr module
++         * will disable the dyn-evq and this situation is handled.
++         */
++		pr_warn("KPCIMGR: module uses dynamic event queue, but kpcimgr does not support it\n");
++	}
++
+ 	if (!ks->have_persistent_mem)
+ 		return 0;
+ 
+@@ -701,7 +781,7 @@ static void unmap_resources(void)
+ static int map_resources(struct platform_device *pfdev)
+ {
+ 	struct device_node *dn = pfdev->dev.of_node;
+-	u32 shmem_idx, hwmem_idx, kstate_idx = -1;
++	u32 shmem_idx, hwmem_idx, dynevq_idx, kstate_idx = U32_MAX;
+ 	struct resource res, kstate_res;
+ 	kstate_t *ks;
+ 	void *shmem;
+@@ -719,6 +799,13 @@ static int map_resources(struct platform_device *pfdev)
+ 		return -ENOMEM;
+ 	}
+ 
++	/* Dynamic event queue index is optional */
++	err = of_property_read_u32(dn, "dynevq-index", &dynevq_idx);
++	if (err) {
++		pr_err("KPCIMGR: no dynevq-index value found\n");
++		dynevq_idx = U32_MAX;
++	}
++
+ 	err = of_address_to_resource(dn, shmem_idx, &res);
+ 	if (err) {
+ 		pr_err("KPCIMGR: no resource found for shmem-index=%d\n",
+@@ -748,6 +835,7 @@ static int map_resources(struct platform_device *pfdev)
+ 		memset((void *)ks, 0, sizeof(kstate_t));
+ 		ks->active_port_compat = -1;
+ 		ks->have_persistent_mem = 0;
++        ks->dynevq_idx = -1;
+ 		shmem = vmalloc(resource_size(&res));
+ 		if (shmem == NULL) {
+ 			vfree((void *)ks);
+@@ -846,8 +934,13 @@ static int map_resources(struct platform_device *pfdev)
+ 			pr_err(PFX "iomap resource %d failed\n", i);
+ 			goto errout;
+ 		}
+-		if (i == hwmem_idx)
++
++		if (i == hwmem_idx) {
+ 			ks->hwmem_idx = ks->nranges;
++		} else if (i == dynevq_idx) {
++			ks->dynevq_idx = ks->nranges;
++			ks->features |= FLAG_DYN_EVQ;
++		}
+ 		ks->nranges++;
+ 	}
+ 
+@@ -926,7 +1019,7 @@ static u64 kpcimgr_upcall(int req, u64 arg1, u64 arg2, u64 arg3)
+ {
+ 	kstate_t *ks = get_kstate();
+ 
+-	if (ks->valid != KSTATE_MAGIC)		/* no code loaded */
++	if (ks->valid != KSTATE_MAGIC && req != PRINT_LOG_MSG)/* no code loaded */
+ 		return 1;
+ 
+ 	switch (req) {
+@@ -934,11 +1027,17 @@ static u64 kpcimgr_upcall(int req, u64 arg1, u64 arg2, u64 arg3)
+ 		ks->event_intr++;
+ 		wake_up_event_queue();
+ 		break;
++	case WAKE_UP_DYN_EVENT_QUEUE:
++		wake_up_dyn_event_queue();
++		break;
+ 	case PRINT_LOG_MSG:
+ 		printk((char *)arg1); /* KERN_LEVEL provided by arg1 */
+ 		break;
+ 	case PREG_READ:
+ 		return kpcimgr_preg_read(arg1);
++    case SET_DYN_EVENT_QUEUE_STATE:
++        setup_dyn_evq_state(arg1);
++        break;
+ 	default:
+ 		return 1;
+ 	}
+@@ -1070,6 +1169,20 @@ static int kpcimgr_notify_reboot(struct notifier_block *this,
+ 	return NOTIFY_DONE;
+ }
+ 
++/*
++ * Misc device fordynamic pcie event queue
++ */
++static const struct file_operations __maybe_unused kpcimgr_evq_fops = {
++	.owner          = THIS_MODULE,
++	.poll           = poll_kpcimgr_evq,
++	.open           = open_kpcimgr_evq,
++};
++
++static struct miscdevice kpcimgr_evq_dev = {
++	MISC_DYNAMIC_MINOR,
++	KPCIMGR_EVQ_NAME,
++	&kpcimgr_evq_fops
++};
+ /*
+  * Driver Initialization
+  */
+@@ -1111,6 +1224,14 @@ static int kpcimgr_probe(struct platform_device *pfdev)
+ 		goto errout_free_intrs;
+ 	}
+ 
++	if (ks->features & FLAG_DYN_EVQ) {
++	    err = misc_register(&kpcimgr_evq_dev);
++    	if (err) {
++	    	pr_err(PFX "register pciemgr_evq_dev failed: %d\n", err);
++            ks->features &= (~FLAG_DYN_EVQ);
++	    }
++    }
++
+ 	ks->upcall = (void *)kpcimgr_upcall;
+ 	ks->mod = NULL;
+ 	if (ks->valid == KSTATE_MAGIC && ks->running) {
+diff --git a/drivers/soc/pensando/kpcimgr_api.h b/drivers/soc/pensando/kpcimgr_api.h
+index 5c71943e4ad5..404a34a79334 100644
+--- a/drivers/soc/pensando/kpcimgr_api.h
++++ b/drivers/soc/pensando/kpcimgr_api.h
+@@ -57,12 +57,15 @@ struct kpcimgr_entry_points_t {
+ #define FLAG_PSCI_CPU_RELEASED	BIT_ULL(3)
+ #define FLAG_KEXEC		BIT_ULL(4)
+ #define FLAG_PORT_BIFURCATION	BIT_ULL(5)
++#define FLAG_DYN_EVQ		BIT_ULL(6)
+ #define FLAG_FUTURE_FEATURE	BIT_ULL(15)
+ 
+ /* upcalls */
+ #define WAKE_UP_EVENT_QUEUE 1
+ #define PRINT_LOG_MSG 2
+ #define PREG_READ 3
++#define SET_DYN_EVENT_QUEUE_STATE 4
++#define WAKE_UP_DYN_EVENT_QUEUE 5
+ 
+ /* event queue sizing */
+ #define EVENT_QUEUE_LENGTH 1024
+@@ -87,6 +90,13 @@ struct kpcimgr_entry_points_t {
+ #define EARLY_POLL 9
+ #define MAX_DATA 10
+ 
++typedef struct kpcimgr_dyn_evq_state {
++    uint32_t *ring_pi;
++    uint32_t *ring_ci;
++    uint32_t *miss_evt_pi;
++    uint32_t *miss_evt_ci;
++} kpcimgr_dyn_evq_state_t;
++
+ typedef struct {
+ 	unsigned long msgaddr;
+ 	unsigned int msgdata;
+@@ -115,6 +125,7 @@ struct kpcimgr_state_t {
+ 			int features_valid;
+ 			int active_port_mask;
+ 			msi_info_t msi[MSI_NVECTORS];
++			int dynevq_idx;
+ 		};
+ 	};
+ 
+@@ -167,6 +178,9 @@ _Static_assert(sizeof(kstate_t) < SHMEM_KSTATE_SIZE,
+ #define PFX KPCIMGR_NAME ": "
+ #define KPCIMGR_KERNEL_VERSION 3
+ 
++#define KPCIMGR_EVQ_DEV "/dev/kpcimgr_evq"
++#define KPCIMGR_EVQ_NAME "kpcimgr_evq"
++
+ #define FW_INFO_OFFSET   0x800
+ #define FW_INFO_MAX_SIZE 0x800
+ #define FW_INFO_MAGIC_V1 0xD0B05E18
+-- 
+2.25.1
+
