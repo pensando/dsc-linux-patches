@@ -1,0 +1,36 @@
+From ed555bc90947e49aa4bdd12f7f207e3ae54bf7c2 Mon Sep 17 00:00:00 2001
+From: rahshekh <rahulshekhar@pensando.io>
+Date: Thu, 9 Apr 2026 10:54:40 -0700
+Subject: [PATCH] drivers/soc/pensando/cap_mem: O_SYNC supp on coherent region
+
+Honor non-cachable mapping on cohernet region if capmem device was
+opened in O_SYNC mode
+
+Signed-off-by: Chaitanya Huilgol <chaitanya.huilgol@amd.com>
+Signed-off-by: rahshekh <rahulshekhar@pensando.io>
+---
+ drivers/soc/pensando/cap_mem.c | 8 ++++++++
+ 1 file changed, 8 insertions(+)
+
+diff --git a/drivers/soc/pensando/cap_mem.c b/drivers/soc/pensando/cap_mem.c
+index 25138aedeec2..83afc23f3f40 100644
+--- a/drivers/soc/pensando/cap_mem.c
++++ b/drivers/soc/pensando/cap_mem.c
+@@ -271,6 +271,14 @@ static int cap_mem_mmap(struct file *file, struct vm_area_struct *vma)
+ 
+ 	default:
+ 		// CAPMEM_TYPE_COHERENT - default inner shareable mapping
++		if (file->f_flags & O_SYNC) {
++			/*
++			 * Honor non-caching behavior if requested by the user. Required
++			 * for uniform non-cached behvior for cache coherent shared memory
++			 * ioremapped by kpcimgr that is mmaped in userspace.
++			 */
++			pgprot = pgprot_noncached(pgprot);
++		}
+ 		break;
+ 	}
+ 
+-- 
+2.25.1
+

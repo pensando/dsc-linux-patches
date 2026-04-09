@@ -1,0 +1,60 @@
+From 6c4cdc0b117b91297b80365b27070916d2c059a8 Mon Sep 17 00:00:00 2001
+From: rahshekh <rahulshekhar@pensando.io>
+Date: Thu, 9 Apr 2026 12:03:34 -0700
+Subject: [PATCH] arch/arm64/boot/dts/pensando/elba: increase uio_penmsi irq to
+ 32 for elba,gigilo Co-authored-by: Venkata Sagar Muppandam
+ <venkatasagar.muppandam@amd.com>
+
+Signed-off-by: rahshekh <rahulshekhar@pensando.io>
+---
+ arch/arm64/boot/dts/pensando/elba.dtsi   | 4 ++--
+ arch/arm64/boot/dts/pensando/giglio.dtsi | 4 ++--
+ 2 files changed, 4 insertions(+), 4 deletions(-)
+
+diff --git a/arch/arm64/boot/dts/pensando/elba.dtsi b/arch/arm64/boot/dts/pensando/elba.dtsi
+index c50886aadf02..2ea023e1bd5c 100644
+--- a/arch/arm64/boot/dts/pensando/elba.dtsi
++++ b/arch/arm64/boot/dts/pensando/elba.dtsi
+@@ -186,7 +186,7 @@ uio_penmsi1@520000 {
+ 			compatible = "pensando,uio_penmsi1";
+ 			reg = <0x0 0x520000 0x0 0x10000>;
+ 			msi-parent = <&its 0xa>;
+-			num-interrupts = <16>;  /* # MSI interrupts to get */
++			num-interrupts = <32>;  /* # MSI interrupts to get */
+ 		};
+ 
+ 		gic: interrupt-controller@800000 {
+@@ -283,7 +283,7 @@ pcie@307c2480 {
+ 
+ 		kpcimgr@20000000 {
+ 			compatible = "pensando,kpcimgr";
+-			msi-parent = <&its 0xf>;
++			msi-parent = <&its 0x1f>;
+ 			shmem-index = <3>;
+ 			hwmem-index = <2>;
+ 			dynevq-index = <4>;
+diff --git a/arch/arm64/boot/dts/pensando/giglio.dtsi b/arch/arm64/boot/dts/pensando/giglio.dtsi
+index 6240bf21d841..7081c3126eb3 100644
+--- a/arch/arm64/boot/dts/pensando/giglio.dtsi
++++ b/arch/arm64/boot/dts/pensando/giglio.dtsi
+@@ -292,7 +292,7 @@ uio_penmsi1@520000 {
+ 			compatible = "pensando,uio_penmsi1";
+ 			reg = <0x0 0x520000 0x0 0x10000>;
+ 			msi-parent = <&its 0xa>;
+-			num-interrupts = <16>;  /* # MSI interrupts to get */
++			num-interrupts = <32>;  /* # MSI interrupts to get */
+ 		};
+ 
+ 		gic: interrupt-controller@800000 {
+@@ -426,7 +426,7 @@ pcie@307c2480 {
+ 
+ 		kpcimgr@20000000 {
+ 			compatible = "pensando,kpcimgr";
+-			msi-parent = <&its 0xf>;
++			msi-parent = <&its 0x1f>;
+ 			shmem-index = <3>;
+ 			hwmem-index = <2>;
+ 			reg =  <0x0 0x20000000 0x0 0x00380000   /* PXB Base */
+-- 
+2.25.1
+
