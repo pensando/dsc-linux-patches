@@ -1,0 +1,39 @@
+From 79d81891e400b018d92773ca6a859ecc4f31fe91 Mon Sep 17 00:00:00 2001
+From: rahshekh <rahulshekhar@pensando.io>
+Date: Thu, 9 Apr 2026 11:55:22 -0700
+Subject: [PATCH] arch/arm64/configs/: Enable dm_crypt for elba/giglio mainfw
+ Co-authored-by: Rahul Shekhar <rahul.shekhar@amd.com>
+
+Signed-off-by: rahshekh <rahulshekhar@pensando.io>
+---
+ arch/arm64/configs/elba_defconfig   | 1 +
+ arch/arm64/configs/giglio_defconfig | 1 +
+ 2 files changed, 2 insertions(+)
+
+diff --git a/arch/arm64/configs/elba_defconfig b/arch/arm64/configs/elba_defconfig
+index d95ef62c8d8b..7a5fcb9f4360 100644
+--- a/arch/arm64/configs/elba_defconfig
++++ b/arch/arm64/configs/elba_defconfig
+@@ -150,6 +150,7 @@ CONFIG_EEPROM_AT24=y
+ CONFIG_EEPROM_AT25=y
+ CONFIG_MD=y
+ CONFIG_BLK_DEV_DM=y
++CONFIG_DM_CRYPT=y
+ CONFIG_DM_VERITY=y
+ CONFIG_NETDEVICES=y
+ CONFIG_BONDING=y
+diff --git a/arch/arm64/configs/giglio_defconfig b/arch/arm64/configs/giglio_defconfig
+index 05b076e71722..814e100f28cb 100644
+--- a/arch/arm64/configs/giglio_defconfig
++++ b/arch/arm64/configs/giglio_defconfig
+@@ -154,6 +154,7 @@ CONFIG_EEPROM_AT24=y
+ CONFIG_EEPROM_AT25=y
+ CONFIG_MD=y
+ CONFIG_BLK_DEV_DM=y
++CONFIG_DM_CRYPT=y
+ CONFIG_DM_VERITY=y
+ CONFIG_NETDEVICES=y
+ CONFIG_BONDING=y
+-- 
+2.25.1
+
