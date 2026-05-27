@@ -1,0 +1,278 @@
+From 0c11d4231043e76eae2b21dd9ad2aabea00e5a71 Mon Sep 17 00:00:00 2001
+From: rahshekh <rahulshekhar@pensando.io>
+Date: Tue, 26 May 2026 14:37:29 -0700
+Subject: [PATCH 7/8] arm64: dts: amd: salina: add eMMC reset support (#578)
+
+---
+ .../boot/dts/amd/salina-asic-common.dtsi      |   2 +
+ arch/arm64/boot/dts/amd/salina-n1-common.dtsi |  11 +-
+ drivers/mmc/host/sdhci-cadence.c              |   4 +
+ drivers/reset/reset-elbasr.c                  | 110 ++++++++++++++----
+ drivers/spi/spi-cpld-spimux.c                 |   2 +-
+ 5 files changed, 107 insertions(+), 22 deletions(-)
+
+diff --git a/arch/arm64/boot/dts/amd/salina-asic-common.dtsi b/arch/arm64/boot/dts/amd/salina-asic-common.dtsi
+index db72a31c0c7c..72b7d28e7022 100644
+--- a/arch/arm64/boot/dts/amd/salina-asic-common.dtsi
++++ b/arch/arm64/boot/dts/amd/salina-asic-common.dtsi
+@@ -4,6 +4,7 @@
+  */
+ 
+ #include <dt-bindings/i2c/i2c.h>
++#include <dt-bindings/reset/amd,pensando-elba-reset.h>
+ 
+ &spi0 {
+ 	status = "okay";
+@@ -21,6 +22,7 @@ &emmc0 {
+ 	bus-width = <8>;
+ 	cap-mmc-hw-reset;
+ 	reset-names = "hw";
++	resets = <&rstc EMMC_HW_RESET>;
+ 	status = "ok";
+ };
+ 
+diff --git a/arch/arm64/boot/dts/amd/salina-n1-common.dtsi b/arch/arm64/boot/dts/amd/salina-n1-common.dtsi
+index fa327c2f92cc..7e8484e87e4c 100644
+--- a/arch/arm64/boot/dts/amd/salina-n1-common.dtsi
++++ b/arch/arm64/boot/dts/amd/salina-n1-common.dtsi
+@@ -45,7 +45,16 @@ spi@0 {
+ 		spi@0 {
+ 			compatible = "amd,pensando-elbasr", "simple-mfd";
+ 			reg = <0>;
+-			spi-max-frequency = <12000000>;
++			#address-cells = <1>;
++			#size-cells = <0>;
++			spi-max-frequency = <5000000>;
++
++			rstc: reset-controller@0 {
++				compatible = "amd,pensando-elbasr-reset";
++				reg = <0>;
++				spi-reset-frequency = <500000>;
++				#reset-cells = <1>;
++			};
+ 		};
+ 
+ 		spi@1 {
+diff --git a/drivers/mmc/host/sdhci-cadence.c b/drivers/mmc/host/sdhci-cadence.c
+index b2ec7f4769f1..a912ebc4f8b3 100644
+--- a/drivers/mmc/host/sdhci-cadence.c
++++ b/drivers/mmc/host/sdhci-cadence.c
+@@ -808,6 +808,8 @@ static void sdhci_cdns_mmc_hw_reset(struct mmc_host *mmc)
+ 
+ 	dev_info(mmc_dev(host->mmc), "emmc hardware reset\n");
+ 
++	disable_irq(host->irq);
++
+ 	reset_control_assert(priv->rst_hw);
+ 	/* For eMMC, minimum is 1us but give it 3us for good measure */
+ 	udelay(3);
+@@ -815,6 +817,8 @@ static void sdhci_cdns_mmc_hw_reset(struct mmc_host *mmc)
+ 	reset_control_deassert(priv->rst_hw);
+ 	/* For eMMC, minimum is 200us but give it 300us for good measure */
+ 	usleep_range(300, 1000);
++
++	enable_irq(host->irq);
+ }
+ 
+ static int sdhci_cdns_probe(struct platform_device *pdev)
+diff --git a/drivers/reset/reset-elbasr.c b/drivers/reset/reset-elbasr.c
+index 4b7db6b8baa6..c657c7a8dab0 100644
+--- a/drivers/reset/reset-elbasr.c
++++ b/drivers/reset/reset-elbasr.c
+@@ -1,6 +1,17 @@
+ // SPDX-License-Identifier: (GPL-2.0+ OR MIT)
+ /*
+  * Copyright (c) 2022 Advanced Micro Devices, Inc.
++ *
++ * Common elbasr reset controller for both Elba and Salina.
++ *
++ * On Salina (with CPLD mux) the optional property "spi-reset-frequency"
++ * (placed on the reset-controller node) is read. If present and non-zero,
++ * the parent SPI bus is temporarily forced to that frequency only for
++ * the duration of assert() and deassert(). The original speed is restored
++ * immediately after the register write.
++ *
++ * On Elba (no mux, direct physical chip selects) the property is absent
++ * or zero, so the driver behaves exactly as before (no speed change).
+  */
+ 
+ #include <linux/mfd/pensando-elbasr.h>
+@@ -9,12 +20,15 @@
+ #include <linux/regmap.h>
+ #include <linux/err.h>
+ #include <linux/of.h>
++#include <linux/spi/spi.h>
+ 
+ #include <dt-bindings/reset/amd,pensando-elba-reset.h>
+ 
+ struct elbasr_reset {
+ 	struct reset_controller_dev rcdev;
++	struct spi_device *spi;		/* cached parent SPI device */
+ 	struct regmap *regmap;
++	unsigned int reset_speed_hz;	/* 0 = no override (Elba) */
+ };
+ 
+ static inline struct elbasr_reset *to_elbasr_rst(struct reset_controller_dev *rc)
+@@ -32,52 +46,104 @@ static inline int elbasr_reset_shift(unsigned long id)
+ 	}
+ }
+ 
+-static int elbasr_reset_assert(struct reset_controller_dev *rcdev,
+-			       unsigned long id)
++static int elbasr_reset(struct reset_controller_dev *rcdev,
++			unsigned long id, bool enable)
+ {
+ 	struct elbasr_reset *elbar = to_elbasr_rst(rcdev);
+-	int val;
++	struct spi_device *spi = elbar->spi;
++	unsigned int orig_speed = 0;
++	int val, ret;
+ 	u32 mask;
+ 
++	dev_dbg(&spi->dev, "emmc_reset: %s\n", enable ? "assert" : "deassert");
++
+ 	val = elbasr_reset_shift(id);
+ 	if (val < 0)
+ 		return val;
+ 	mask = 1 << val;
+ 
+-	return regmap_update_bits(elbar->regmap, ELBASR_CTRL0_REG, mask, mask);
++	/* Temporary spi frequency reduction for emmc reset is needed */
++	if (spi && elbar->reset_speed_hz) {
++		orig_speed = spi->max_speed_hz;
++
++		dev_dbg(&spi->dev,
++			"emmc reset, temporarily setting SPI to %u Hz (was %u Hz)\n",
++			elbar->reset_speed_hz, orig_speed);
++
++		spi->max_speed_hz = elbar->reset_speed_hz;
++	}
++
++	ret = regmap_update_bits(elbar->regmap,
++				 ELBASR_CTRL0_REG,
++				 mask,
++				 enable ? mask : 0);
++
++	/* Restore original speed */
++	if (spi && orig_speed) {
++		spi->max_speed_hz = orig_speed;
++		dev_dbg(&spi->dev, "restored SPI speed to %u Hz after reset %s\n",
++			orig_speed, enable ? "assert" : "deassert");
++	}
++
++	return ret;
++}
++
++static int elbasr_reset_assert(struct reset_controller_dev *rcdev,
++			       unsigned long id)
++{
++	return elbasr_reset(rcdev, id, true);
+ }
+ 
+ static int elbasr_reset_deassert(struct reset_controller_dev *rcdev,
+ 				 unsigned long id)
+ {
+-	struct elbasr_reset *elbar = to_elbasr_rst(rcdev);
+-	int val;
+-	u32 mask;
+-
+-	val = elbasr_reset_shift(id);
+-	if (val < 0)
+-		return val;
+-	mask = 1 << val;
+-
+-	return regmap_update_bits(elbar->regmap, ELBASR_CTRL0_REG, mask, 0);
++	return elbasr_reset(rcdev, id, false);
+ }
+ 
+ static const struct reset_control_ops elbasr_reset_ops = {
+-	.assert	= elbasr_reset_assert,
++	.assert = elbasr_reset_assert,
+ 	.deassert = elbasr_reset_deassert,
+ };
+ 
+ static int elbasr_reset_probe(struct platform_device *pdev)
+ {
+-	struct elbasr_data *elbasr = dev_get_drvdata(pdev->dev.parent);
++	struct elbasr_data *elbasr;
+ 	struct elbasr_reset *elbar;
++	struct spi_device *spi_parent;
+ 	int ret;
+ 
+-	elbar = devm_kzalloc(&pdev->dev, sizeof(struct elbasr_reset),
+-			     GFP_KERNEL);
++	if (!pdev->dev.parent) {
++		dev_err(&pdev->dev, "no parent device\n");
++		return -ENODEV;
++	}
++
++	elbasr = dev_get_drvdata(pdev->dev.parent);
++	if (!elbasr) {
++		dev_err(&pdev->dev, "no elbasr_data from parent MFD\n");
++		return -ENODEV;
++	}
++
++	spi_parent = to_spi_device(pdev->dev.parent);
++	if (spi_parent) {
++		pr_info("pensando_elbasr_reset: parent SPI device %s, current max_speed_hz = %u Hz\n",
++			 dev_name(&spi_parent->dev), spi_parent->max_speed_hz);
++	} else {
++		dev_warn(&pdev->dev, "could not locate parent SPI device\n");
++	}
++
++	elbar = devm_kzalloc(&pdev->dev, sizeof(struct elbasr_reset), GFP_KERNEL);
+ 	if (!elbar)
+ 		return -ENOMEM;
+ 
++	elbar->spi = spi_parent;
++
++	/* Read optional spi-reset-frequency (Salina only, default 0 = Elba behavior) */
++	elbar->reset_speed_hz = 0;
++	of_property_read_u32(pdev->dev.of_node, "spi-reset-frequency", &elbar->reset_speed_hz);
++	if (elbar->reset_speed_hz)
++		pr_info("pensando_elbasr_reset: emmc spi-reset-frequency = %u Hz\n",
++			 elbar->reset_speed_hz);
++
+ 	elbar->rcdev.owner = THIS_MODULE;
+ 	elbar->rcdev.nr_resets = ELBASR_NR_RESETS;
+ 	elbar->rcdev.ops = &elbasr_reset_ops;
+@@ -87,6 +153,10 @@ static int elbasr_reset_probe(struct platform_device *pdev)
+ 	platform_set_drvdata(pdev, elbar);
+ 
+ 	ret = devm_reset_controller_register(&pdev->dev, &elbar->rcdev);
++	if (ret)
++		dev_err(&pdev->dev, "failed to register reset controller (ret=%d)\n", ret);
++	else
++		dev_dbg(&pdev->dev, "reset controller registered\n");
+ 
+ 	return ret;
+ }
+@@ -97,10 +167,10 @@ static const struct of_device_id elba_reset_dt_match[] = {
+ };
+ 
+ static struct platform_driver elbasr_reset_driver = {
+-	.probe	= elbasr_reset_probe,
++	.probe = elbasr_reset_probe,
+ 	.driver = {
+ 		.name = "pensando_elbasr_reset",
+-		.of_match_table	= elba_reset_dt_match,
++		.of_match_table = elba_reset_dt_match,
+ 	},
+ };
+ builtin_platform_driver(elbasr_reset_driver);
+diff --git a/drivers/spi/spi-cpld-spimux.c b/drivers/spi/spi-cpld-spimux.c
+index 6e2a771f046b..b4a69ae1fdc0 100644
+--- a/drivers/spi/spi-cpld-spimux.c
++++ b/drivers/spi/spi-cpld-spimux.c
+@@ -212,7 +212,7 @@ static int cpld_mux_probe(struct spi_device *spi)
+ 
+ 	spi_set_drvdata(spi, mux);
+ 
+-	dev_dbg(&spi->dev, "CPLD SPI mux initialized\n");
++	dev_info(&spi->dev, "CPLD SPI mux initialized\n");
+ 
+ 	return 0;
+ }
+-- 
+2.25.1
+

@@ -1,0 +1,1204 @@
+From 1651af2d01da9a49aae0da5d7f1dad431515aa0c Mon Sep 17 00:00:00 2001
+From: rahshekh <rahulshekhar@pensando.io>
+Date: Tue, 26 May 2026 14:32:14 -0700
+Subject: [PATCH 3/8] spi: cadence-quadspi fix, cpld-spimux driver, and
+ cpld-spimux fix
+
+- spi: cadence-quadspi: fix indirect write timeout on Pensando Salina N1 (APB-AHB hazard)
+- spi: add AMD Pensando Salina CPLD SPI multiplexer driver
+- spi: cpld-spimux: Fix CPLD CSMAP write
+---
+ arch/arm64/boot/dts/amd/salina-asic.dts       |  18 +-
+ arch/arm64/boot/dts/amd/salina-asic.dtsi      |  26 ++
+ arch/arm64/boot/dts/amd/salina-n1-common.dtsi |  64 ++++-
+ .../boot/dts/amd/salina-n1-flash-parts.dtsi   | 187 +++++++++++++-
+ arch/arm64/configs/salina_defconfig           |   5 +
+ drivers/i2c/busses/i2c-designware-common.c    |  26 ++
+ drivers/i2c/busses/i2c-designware-core.h      |   3 +
+ drivers/i2c/busses/i2c-designware-master.c    |   7 +-
+ drivers/i2c/busses/i2c-designware-slave.c     |   2 +-
+ drivers/i2c/busses/i2c-rd1173.c               |   3 +-
+ drivers/mfd/pensando-elbasr.c                 |  11 +-
+ drivers/spi/Kconfig                           |  15 ++
+ drivers/spi/Makefile                          |   1 +
+ drivers/spi/spi-cadence-quadspi.c             | 228 +++++++++++++---
+ drivers/spi/spi-cpld-spimux.c                 | 244 ++++++++++++++++++
+ drivers/spi/spi-dw-mmio.c                     |   2 +-
+ 16 files changed, 774 insertions(+), 68 deletions(-)
+ create mode 100644 drivers/spi/spi-cpld-spimux.c
+
+diff --git a/arch/arm64/boot/dts/amd/salina-asic.dts b/arch/arm64/boot/dts/amd/salina-asic.dts
+index f15e89e4bd1f..3b3bc9fc83c7 100644
+--- a/arch/arm64/boot/dts/amd/salina-asic.dts
++++ b/arch/arm64/boot/dts/amd/salina-asic.dts
+@@ -20,6 +20,7 @@ / {
+ 
+ 	aliases {
+ 		serial1 = &uart1;
++		spi0 = &spi0;
+ 		spi1 = &spi1;
+ 	};
+ 
+@@ -44,6 +45,9 @@ tawkipc {
+ 		status = "okay";
+ 	};
+ };
++&spi0 {
++	status = "okay";
++};
+ 
+ &spi1 {
+ 	status = "okay";
+@@ -57,24 +61,10 @@ &emmc0 {
+ 	bus-width = <8>;
+ 	cap-mmc-hw-reset;
+ 	reset-names = "hw";
+-	resets = <&rstc 0>;
+ 	status = "ok";
+ };
+ 
+ &i2c1 {
+ 	clock-frequency = <100000>;
+ 	status = "okay";
+-
+-	fru@64 {
+-		compatible = "slave-24c32";
+-		reg = <0x64>;
+-	};
+-};
+-
+-&soc {
+-	rstc: reset-controller@0 {
+-		compatible = "amd,pensando-salinasr-reset";
+-		reg = <0x0 0x0 0x0 0xff>;
+-		#reset-cells = <1>;
+-	};
+ };
+diff --git a/arch/arm64/boot/dts/amd/salina-asic.dtsi b/arch/arm64/boot/dts/amd/salina-asic.dtsi
+index b87ae9ecf192..6cef028b725f 100644
+--- a/arch/arm64/boot/dts/amd/salina-asic.dtsi
++++ b/arch/arm64/boot/dts/amd/salina-asic.dtsi
+@@ -89,6 +89,18 @@ i2c1: i2c@20000 {
+ 			status = "disabled";
+ 		};
+ 
++		spi0: spi@b0000 {
++			compatible = "amd,pensando-elba-spi";
++			reg = <0x0 0xb0000 0x0 0x100>;
++			amd,pensando-elba-syscon = <&syscon>;
++			clocks = <&ahb_clk>;
++			interrupts = <GIC_SPI 12 IRQ_TYPE_LEVEL_HIGH>;
++			#address-cells = <1>;
++			#size-cells = <0>;
++			num-cs = <2>;
++			status = "disabled";
++		};
++
+ 		spi1: spi@c0000 {
+ 			compatible = "amd,pensando-elba-spi";
+ 			reg = <0x0 0xc0000 0x0 0x100>;
+@@ -101,6 +113,20 @@ spi1: spi@c0000 {
+ 			status = "disabled";
+ 		};
+ 
++		qspi1: spi@a0000 {
++			compatible = "amd,pensando-elba-qspi", "cdns,qspi-nor";
++			reg = <0x0 0xa0000 0x0 0x400>,
++			      <0x0 0x7fff0000 0x0 0x1000>;
++			#address-cells = <1>;
++			#size-cells = <0>;
++			interrupts = <GIC_SPI 1 IRQ_TYPE_LEVEL_HIGH>;
++			clocks = <&flash_clk>;
++			cdns,fifo-depth = <1024>;
++			cdns,fifo-width = <4>;
++			cdns,trigger-address = <0x07ff0000>;
++			status = "disabled";
++		};
++
+ 		qspi0: spi@90000 {
+ 			compatible = "amd,pensando-elba-qspi";
+ 			#address-cells = <1>;
+diff --git a/arch/arm64/boot/dts/amd/salina-n1-common.dtsi b/arch/arm64/boot/dts/amd/salina-n1-common.dtsi
+index 7ef4dbae097c..4f75873cc422 100644
+--- a/arch/arm64/boot/dts/amd/salina-n1-common.dtsi
++++ b/arch/arm64/boot/dts/amd/salina-n1-common.dtsi
+@@ -27,6 +27,45 @@ &gpio1 {
+ 	status = "ok";
+ };
+ 
++&spi0 {
++	status = "okay";
++
++	spi@0 {
++		compatible = "amd,pensando-cpld-spimux";
++		reg = <0>;
++		#address-cells = <1>;
++		#size-cells = <0>;
++		cs0 = <&spi0 0>;
++		cs1 = <&spi0 1>;
++
++		spi@0 {
++			compatible = "amd,pensando-elbasr", "simple-mfd";
++			reg = <0>;
++			spi-max-frequency = <12000000>;
++		};
++
++		spi@1 {
++			compatible = "amd,pensando-elbasr", "simple-mfd";
++			reg = <1>;
++			spi-max-frequency = <5000000>;
++		};
++
++		spi@2 {
++			compatible = "amd,pensando-cpld-rd1173";
++			reg = <2>;
++			spi-max-frequency = <12000000>;
++			interrupt-parent = <&porta>;
++			interrupts = <0 IRQ_TYPE_LEVEL_LOW>;
++		};
++
++		spi@3 {
++			compatible = "amd,pensando-elbasr", "simple-mfd";
++			reg = <3>;
++			spi-max-frequency = <12000000>;
++		};
++	};
++};
++
+ &spi1 {
+ 	status = "okay";
+ 
+@@ -41,13 +80,13 @@ flash1: cysnor@0 {
+ 		cdns,tsd2d-ns = <0>;
+ 		cdns,tchsh-ns = <0>;
+ 		cdns,tslch-ns = <0>;
+-		};
++	};
+ };
+ 
+ &qspi0 {
+-	status = "okay";
++	status = "disabled";
+ 
+-	flash0: flash@0 {
++	flash2: flash@0 {
+ 		compatible = "jedec,spi-nor";
+ 		reg = <0>;
+ 		spi-max-frequency = <24000000>;
+@@ -60,3 +99,22 @@ flash0: flash@0 {
+ 		cdns,tslch-ns = <0>;
+ 	};
+ };
++
++&qspi1 {
++	status = "okay";
++
++	flash0: flash@0 {
++		compatible = "jedec,spi-nor";
++		reg = <0>;
++		spi-max-frequency = <24000000>;
++		spi-rx-bus-width = <2>;
++		m25p,fast-read;
++		cdns,read-delay = <6>;
++		cdns,tshsl-ns = <200>;
++		cdns,tsd2d-ns = <0>;
++		cdns,tchsh-ns = <0>;
++		cdns,tslch-ns = <0>;
++		write-block-size = <1024>;
++		erase-block-size = <4096>;
++	};
++};
+diff --git a/arch/arm64/boot/dts/amd/salina-n1-flash-parts.dtsi b/arch/arm64/boot/dts/amd/salina-n1-flash-parts.dtsi
+index a1e1e8b4ed8d..2bd80171c923 100644
+--- a/arch/arm64/boot/dts/amd/salina-n1-flash-parts.dtsi
++++ b/arch/arm64/boot/dts/amd/salina-n1-flash-parts.dtsi
+@@ -9,9 +9,190 @@ partitions {
+ 		#address-cells = <1>;
+ 		#size-cells = <1>;
+ 
+-		partition@0 {
+-			label = "qspi0";
+-			reg = <0x0 0x10000000>;
++		/* DPU 256MB Layout Partitions */
++		partition@40000 {
++			label = "a35_pentrustfw0";
++			reg = <0x00040000 0x00020000>;
++		};
++
++		partition@60000 {
++			label = "a35_pentrustfw0";
++			reg = <0x00060000 0x00020000>;
++		};
++
++		partition@80000 {
++			label = "a35_bl1_0";
++			reg = <0x00080000 0x00020000>;
++		};
++
++		partition@a0000 {
++			label = "a35_bl1_1";
++			reg = <0x000a0000 0x00020000>;
++		};
++
++		partition@c0000 {
++			label = "n1_bl1_0";
++			reg = <0x000c0000 0x00020000>;
++		};
++
++		partition@e0000 {
++			label = "n1_bl1_1";
++			reg = <0x000e0000 0x00020000>;
++		};
++
++		partition@100000 {
++			label = "a35_boot0";
++			reg = <0x00100000 0x00020000>;
++		};
++
++		partition@120000 {
++			label = "brdcfg0";
++			reg = <0x00120000 0x00010000>;
++		};
++
++		partition@130000 {
++			label = "brdcfg1";
++			reg = <0x00130000 0x00010000>;
++		};
++
++		partition@140000 {
++			label = "a35_gold_fip";
++			reg = <0x00140000 0x01e00000>;
++		};
++
++		partition@1f40000 {
++			label = "n1_gold_ubootenv";
++			reg = <0x01f40000 0x00010000>;
++		};
++
++		partition@1f50000 {
++			label = "n1_gold_fip";
++			reg = <0x01f50000 0x00400000>;
++		};
++
++		partition@2350000 {
++			label = "n1_gold_linux";
++			reg = <0x02350000 0x04000000>;
++		};
++
++		partition@6350000 {
++			label = "n1_boot0";
++			reg = <0x06350000 0x00020000>;
++		};
++
++		partition@6400000 {
++			label = "a35_gold_ubootenv";
++			reg = <0x06400000 0x00010000>;
++		};
++
++		partition@6800000 {
++			label = "a35_uboota";
++			reg = <0x06800000 0x00800000>;
++		};
++
++		partition@7000000 {
++			label = "a35_ubootb";
++			reg = <0x07000000 0x00800000>;
++		};
++
++		partition@7800000 {
++			label = "a35_golduboot";
++			reg = <0x07800000 0x07c00000>;
++		};
++
++		partition@7c00000 {
++			label = "a35_cpld_prgm";
++			reg = <0x07c00000 0x003e0000>;
++		};
++
++		partition@7fe0000 {
++			label = "a35_ubootenv";
++			reg = <0x07fe0000 0x00010000>;
++		};
++
++		partition@8000000 {
++			label = "a35_fip_a";
++			reg = <0x08000000 0x01e00000>;
++		};
++
++		partition@9e00000 {
++			label = "a35_fip_b";
++			reg = <0x09e00000 0x01e00000>;
++		};
++
++		partition@bc00000 {
++			label = "a35_fwsel";
++			reg = <0x0bc00000 0x00010000>;
++		};
++
++		partition@bc10000 {
++			label = "a35_runcfg0";
++			reg = <0x0bc10000 0x00020000>;
++		};
++
++		partition@bc30000 {
++			label = "a35_runcfg1";
++			reg = <0x0bc30000 0x00020000>;
++		};
++
++		partition@bc50000 {
++			label = "a35_bootlog";
++			reg = <0x0bc50000 0x00020000>;
++		};
++
++		partition@bc70000 {
++			label = "a35_runtime_log";
++			reg = <0x0bc70000 0x01000000>;
++		};
++
++		partition@cc70000 {
++			label = "n1_fip_a";
++			reg = <0x0cc70000 0x00400000>;
++		};
++
++		partition@d070000 {
++			label = "n1_fip_b";
++			reg = <0x0d070000 0x00400000>;
++		};
++
++		partition@d470000 {
++			label = "n1_uefi_vars";
++			reg = <0x0d470000 0x00020000>;
++		};
++
++		partition@d490000 {
++			label = "n1_user_vars";
++			reg = <0x0d490000 0x00020000>;
++		};
++
++		partition@d4b0000 {
++			label = "n1_fwsel";
++			reg = <0x0d4b0000 0x00010000>;
++		};
++
++		partition@d4c0000 {
++			label = "oprom";
++			reg = <0x0d4c0000 0x00080000>;
++		};
++
++		partition@fec0000 {
++			label = "fwcfg0";
++			reg = <0x0fec0000 0x00010000>;
++		};
++
++		partition@fed0000 {
++			label = "fwcfg1";
++			reg = <0x0fed0000 0x00010000>;
++		};
++
++		partition@ffc0000 {
++			label = "coredump_partition";
++			reg = <0x0ffc0000 0x00020000>;
++		};
++
++		partition@ffe0000 {
++			label = "n1_ubootenv";
++			reg = <0x0ffe0000 0x00010000>;
+ 		};
+ 	};
+ };
+diff --git a/arch/arm64/configs/salina_defconfig b/arch/arm64/configs/salina_defconfig
+index 73d733e3ca63..a5d96bc61d50 100644
+--- a/arch/arm64/configs/salina_defconfig
++++ b/arch/arm64/configs/salina_defconfig
+@@ -112,6 +112,7 @@ CONFIG_IP_NF_TARGET_ECN=y
+ CONFIG_IP_NF_TARGET_TTL=y
+ CONFIG_VLAN_8021Q=y
+ CONFIG_NET_PKTGEN=y
++CONFIG_MCTP=y
+ # CONFIG_WIRELESS is not set
+ CONFIG_PCI=y
+ CONFIG_DEVTMPFS=y
+@@ -188,6 +189,7 @@ CONFIG_STMMAC_ETH=m
+ # CONFIG_NET_VENDOR_VIA is not set
+ # CONFIG_NET_VENDOR_WIZNET is not set
+ # CONFIG_NET_VENDOR_XILINX is not set
++CONFIG_MCTP_TRANSPORT_I2C=y
+ CONFIG_MDIO_DEVICE=y
+ # CONFIG_WLAN is not set
+ # CONFIG_INPUT_KEYBOARD is not set
+@@ -205,10 +207,12 @@ CONFIG_I2C=y
+ CONFIG_I2C_CHARDEV=y
+ CONFIG_I2C_DESIGNWARE_SLAVE=y
+ CONFIG_I2C_DESIGNWARE_PLATFORM=y
++CONFIG_I2C_RD1173=y
+ CONFIG_I2C_SLAVE_EEPROM=y
+ CONFIG_I2C_SLAVE_TESTUNIT=y
+ CONFIG_SPI=y
+ CONFIG_SPI_CADENCE_QUADSPI=y
++CONFIG_SPI_CPLD_SPIMUX=y
+ CONFIG_SPI_DESIGNWARE=y
+ CONFIG_SPI_DW_MMIO=y
+ CONFIG_SPI_SPIDEV=y
+@@ -223,6 +227,7 @@ CONFIG_THERMAL=y
+ CONFIG_WATCHDOG=y
+ CONFIG_SOFT_WATCHDOG=y
+ CONFIG_DW_WATCHDOG=y
++CONFIG_MFD_PENSANDO_ELBASR=y
+ # CONFIG_HID is not set
+ # CONFIG_USB_SUPPORT is not set
+ CONFIG_MMC=y
+diff --git a/drivers/i2c/busses/i2c-designware-common.c b/drivers/i2c/busses/i2c-designware-common.c
+index 1b6899d47a96..65999ad95c2b 100644
+--- a/drivers/i2c/busses/i2c-designware-common.c
++++ b/drivers/i2c/busses/i2c-designware-common.c
+@@ -484,6 +484,32 @@ void __i2c_dw_disable(struct dw_i2c_dev *dev)
+ 	dev_warn(dev->dev, "timeout in disabling adapter\n");
+ }
+ 
++/**
++ * i2c_dw_set_mode - switch controller between master and slave mode
++ * @dev: device private data
++ * @mode: DW_IC_MASTER or DW_IC_SLAVE
++ *
++ * Required for MCTP-over-I2C (BMC master → Linux slave RX, then Linux master TX response).
++ */
++void i2c_dw_set_mode(struct dw_i2c_dev *dev, int mode)
++{
++	if (dev->mode == mode)
++		return;
++
++	__i2c_dw_disable(dev);
++
++	if (mode == DW_IC_MASTER)
++		i2c_dw_configure_fifo_master(dev);
++	else
++		i2c_dw_configure_fifo_slave(dev);
++
++	dev->mode = mode;
++
++	__i2c_dw_enable(dev);
++}
++EXPORT_SYMBOL_GPL(i2c_dw_set_mode);
++
++
+ u32 i2c_dw_clk_rate(struct dw_i2c_dev *dev)
+ {
+ 	/*
+diff --git a/drivers/i2c/busses/i2c-designware-core.h b/drivers/i2c/busses/i2c-designware-core.h
+index 2dad1c977fea..d2eecb726ca7 100644
+--- a/drivers/i2c/busses/i2c-designware-core.h
++++ b/drivers/i2c/busses/i2c-designware-core.h
+@@ -347,6 +347,9 @@ int i2c_dw_handle_tx_abort(struct dw_i2c_dev *dev);
+ int i2c_dw_set_fifo_size(struct dw_i2c_dev *dev);
+ u32 i2c_dw_func(struct i2c_adapter *adap);
+ void i2c_dw_disable(struct dw_i2c_dev *dev);
++void i2c_dw_set_mode(struct dw_i2c_dev *dev, int mode);
++void i2c_dw_configure_fifo_master(struct dw_i2c_dev *dev);
++void i2c_dw_configure_fifo_slave(struct dw_i2c_dev *dev);
+ 
+ static inline void __i2c_dw_enable(struct dw_i2c_dev *dev)
+ {
+diff --git a/drivers/i2c/busses/i2c-designware-master.c b/drivers/i2c/busses/i2c-designware-master.c
+index cc3eae757421..6b8a39444059 100644
+--- a/drivers/i2c/busses/i2c-designware-master.c
++++ b/drivers/i2c/busses/i2c-designware-master.c
+@@ -28,7 +28,7 @@
+ #define AMD_TIMEOUT_MAX_US	250
+ #define AMD_MASTERCFG_MASK	GENMASK(15, 0)
+ 
+-static void i2c_dw_configure_fifo_master(struct dw_i2c_dev *dev)
++void i2c_dw_configure_fifo_master(struct dw_i2c_dev *dev)
+ {
+ 	/* Configure Tx/Rx FIFO threshold levels */
+ 	regmap_write(dev->map, DW_IC_TX_TL, dev->tx_fifo_depth / 2);
+@@ -253,6 +253,9 @@ static void i2c_dw_xfer_init(struct dw_i2c_dev *dev)
+ 	u32 ic_con = 0, ic_tar = 0;
+ 	unsigned int dummy;
+ 
++	/* Switch to master mode */
++	i2c_dw_set_mode(dev, DW_IC_MASTER);
++
+ 	/* Disable the adapter */
+ 	__i2c_dw_disable(dev);
+ 
+@@ -775,6 +778,8 @@ i2c_dw_xfer(struct i2c_adapter *adap, struct i2c_msg msgs[], int num)
+ 	ret = -EIO;
+ 
+ done:
++	/* Switch back to slave mode after transfer */
++	i2c_dw_set_mode(dev, DW_IC_SLAVE);
+ 	i2c_dw_release_lock(dev);
+ 
+ done_nolock:
+diff --git a/drivers/i2c/busses/i2c-designware-slave.c b/drivers/i2c/busses/i2c-designware-slave.c
+index 2e079cf20bb5..332b642ba8ad 100644
+--- a/drivers/i2c/busses/i2c-designware-slave.c
++++ b/drivers/i2c/busses/i2c-designware-slave.c
+@@ -18,7 +18,7 @@
+ 
+ #include "i2c-designware-core.h"
+ 
+-static void i2c_dw_configure_fifo_slave(struct dw_i2c_dev *dev)
++void i2c_dw_configure_fifo_slave(struct dw_i2c_dev *dev)
+ {
+ 	/* Configure Tx/Rx FIFO threshold levels. */
+ 	regmap_write(dev->map, DW_IC_TX_TL, 0);
+diff --git a/drivers/i2c/busses/i2c-rd1173.c b/drivers/i2c/busses/i2c-rd1173.c
+index 679409af0c88..c7a83abf1863 100644
+--- a/drivers/i2c/busses/i2c-rd1173.c
++++ b/drivers/i2c/busses/i2c-rd1173.c
+@@ -787,7 +787,8 @@ static int rd1173_probe(struct spi_device *spi)
+ 		rd1173_reset(i2c);
+ 		rd1173_fifo_clear(i2c);
+ 
+-		rc = i2c_add_numbered_adapter(&i2c->i2c_adap);
++		i2c->i2c_adap.nr = -1;
++		rc = i2c_add_adapter(&i2c->i2c_adap);
+ 		if (rc) {
+ 			dev_err(&spi->dev, "error adding i2c adapter: %d\n", rc);
+ 			return rc;
+diff --git a/drivers/mfd/pensando-elbasr.c b/drivers/mfd/pensando-elbasr.c
+index fb0aee91a66e..5a9016b460de 100644
+--- a/drivers/mfd/pensando-elbasr.c
++++ b/drivers/mfd/pensando-elbasr.c
+@@ -798,12 +798,21 @@ static int elbasr_spi_probe(struct spi_device *spi)
+ 		struct device *dev;
+ 
+ 		elbasr->devt = MKDEV(MAJOR(elbasr_devt), minor);
++
++		/*
++		 * Force bus number to 0 so that the device nodes are always
++		 * /dev/spidev0.x regardless of the physical SPI controller
++		 * bus number (which can be 3 on Salina due to the CPLD mux).
++		 *
++		 * This keeps userspace tools (cpldapp, etc.) unchanged and
++		 * matches the legacy Elba behavior.
++		 */
+ 		dev = device_create(elbasr_class,
+ 				    &spi->dev,
+ 				    elbasr->devt,
+ 				    elbasr,
+ 				    "spidev%d.%d",
+-				    spi->master->bus_num,
++				    0,
+ 				    spi_get_chipselect(spi, 0));
+ 
+ 		status = PTR_ERR_OR_ZERO(dev);
+diff --git a/drivers/spi/Kconfig b/drivers/spi/Kconfig
+index ddae0fde798e..adfeca39bc54 100644
+--- a/drivers/spi/Kconfig
++++ b/drivers/spi/Kconfig
+@@ -281,6 +281,21 @@ config SPI_COLDFIRE_QSPI
+ 	  This enables support for the Coldfire QSPI controller in master
+ 	  mode.
+ 
++config SPI_CPLD_SPIMUX
++	tristate "AMD Pensando Salina CPLD SPI mux"
++	depends on ARCH_PENSANDO_SALINA_SOC && SPI_MASTER
++	help
++	  This driver supports the CPLD-based SPI multiplexer
++	  present on AMD Pensando Salina platforms.
++
++	  The CPLD requires a register write on chip select 0
++	  to select the downstream SPI target before accessing
++	  devices behind chip selects 1..3.
++
++	  This driver exposes a virtual SPI controller which
++	  performs the required mux sequencing transparently
++	  for SPI clients.
++
+ config SPI_CS42L43
+ 	tristate "Cirrus Logic CS42L43 SPI controller"
+ 	depends on MFD_CS42L43 && PINCTRL_CS42L43
+diff --git a/drivers/spi/Makefile b/drivers/spi/Makefile
+index 4ff8d725ba5e..5f6b14562730 100644
+--- a/drivers/spi/Makefile
++++ b/drivers/spi/Makefile
+@@ -40,6 +40,7 @@ obj-$(CONFIG_SPI_CADENCE_QUADSPI)	+= spi-cadence-quadspi.o
+ obj-$(CONFIG_SPI_CADENCE_XSPI)		+= spi-cadence-xspi.o
+ obj-$(CONFIG_SPI_CLPS711X)		+= spi-clps711x.o
+ obj-$(CONFIG_SPI_COLDFIRE_QSPI)		+= spi-coldfire-qspi.o
++obj-$(CONFIG_SPI_CPLD_SPIMUX)		+= spi-cpld-spimux.o
+ obj-$(CONFIG_SPI_CS42L43)		+= spi-cs42l43.o
+ obj-$(CONFIG_SPI_DAVINCI)		+= spi-davinci.o
+ obj-$(CONFIG_SPI_DLN2)			+= spi-dln2.o
+diff --git a/drivers/spi/spi-cadence-quadspi.c b/drivers/spi/spi-cadence-quadspi.c
+index 1a8d03958dff..75352b24d8b0 100644
+--- a/drivers/spi/spi-cadence-quadspi.c
++++ b/drivers/spi/spi-cadence-quadspi.c
+@@ -317,6 +317,14 @@ static u32 cqspi_get_rd_sram_level(struct cqspi_st *cqspi)
+ 	return reg & CQSPI_REG_SDRAMLEVEL_RD_MASK;
+ }
+ 
++static u32 cqspi_get_wr_sram_level(struct cqspi_st *cqspi)
++{
++	u32 reg = readl(cqspi->iobase + CQSPI_REG_SDRAMLEVEL);
++
++	reg >>= CQSPI_REG_SDRAMLEVEL_WR_LSB;
++	return reg & CQSPI_REG_SDRAMLEVEL_WR_MASK;
++}
++
+ static u32 cqspi_get_versal_dma_status(struct cqspi_st *cqspi)
+ {
+ 	u32 dma_status;
+@@ -329,6 +337,54 @@ static u32 cqspi_get_versal_dma_status(struct cqspi_st *cqspi)
+ 	return dma_status & CQSPI_REG_VERSAL_DMA_DST_DONE_MASK;
+ }
+ 
++/*
++ * Threaded IRQ handler for Pensando/Salina APB-AHB hazard workaround.
++ *
++ * The bridge latency between the AHB-side transfer-complete event and its
++ * visibility via the APB IRQSTATUS register can exceed the time between the
++ * GIC delivering the interrupt and the hard-IRQ handler running.  Reading
++ * IRQSTATUS in the hard-IRQ context therefore returns 0 and complete() is
++ * never called.
++ *
++ * Running in a kernel thread allows udelay() so the bridge has time to
++ * propagate before IRQSTATUS is sampled.
++ */
++static irqreturn_t cqspi_irq_thread(int this_irq, void *dev)
++{
++	struct cqspi_st *cqspi = dev;
++
++	/*
++	 * Clear all interrupt status bits unconditionally (write-1-to-clear).
++	 *
++	 * On Pensando/Salina the APB-AHB bridge means IRQSTATUS may read as 0
++	 * even though the AHB-side IND_COMP bit is set.  If we only wrote back
++	 * what we read, a stuck AHB-side IND_COMP would immediately re-fire
++	 * the interrupt when IRQMASK is re-enabled for the next page, causing
++	 * that page's real IND_COMP to be missed and a timeout.  Writing
++	 * all-ones guarantees the AHB-side status is cleared regardless.
++	 *
++	 * This handler is only woken (apb_ahb_hazard path) when the GIC has
++	 * delivered a real interrupt — the only enabled sources are IND_COMP
++	 * and UNDERFLOW — so calling complete() unconditionally is safe.
++	 */
++	writel(CQSPI_IRQ_STATUS_MASK, cqspi->iobase + CQSPI_REG_IRQSTATUS);
++	/*
++	 * CONFIG read-modify-write flushes the IRQSTATUS clear all the way
++	 * through the APB-AHB bridge to the AHB-side register file.  Without
++	 * this, a simple readl() only commits the write to the APB side of the
++	 * bridge; the AHB side may still show IND_COMP set when the GIC
++	 * unmasks the interrupt line on thread exit, causing an immediate
++	 * spurious re-delivery.  The r-m-w stalls the APB bus until the prior
++	 * write is visible from both sides.
++	 */
++	writel(readl(cqspi->iobase + CQSPI_REG_CONFIG),
++	       cqspi->iobase + CQSPI_REG_CONFIG);
++
++	complete(&cqspi->transfer_complete);
++
++	return IRQ_HANDLED;
++}
++
+ static irqreturn_t cqspi_irq_handler(int this_irq, void *dev)
+ {
+ 	struct cqspi_st *cqspi = dev;
+@@ -338,7 +394,14 @@ static irqreturn_t cqspi_irq_handler(int this_irq, void *dev)
+ 
+ 	ddata = of_device_get_match_data(device);
+ 
+-	/* Read interrupt status */
++	/*
++	 * On Pensando/Salina defer to the threaded handler so that udelay()
++	 * can be used to wait for the APB-AHB bridge to propagate the
++	 * AHB-side completion event into IRQSTATUS.
++	 */
++	if (cqspi->apb_ahb_hazard)
++		return IRQ_WAKE_THREAD;
++
+ 	irq_status = readl(cqspi->iobase + CQSPI_REG_IRQSTATUS);
+ 
+ 	/* Clear interrupt */
+@@ -712,6 +775,10 @@ static int cqspi_indirect_read_execute(struct cqspi_flash_pdata *f_pdata,
+ 
+ 	/* Clear all interrupts. */
+ 	writel(CQSPI_IRQ_STATUS_MASK, reg_base + CQSPI_REG_IRQSTATUS);
++	/* Flush IRQSTATUS clear to AHB before enabling IRQMASK. */
++	if (cqspi->apb_ahb_hazard)
++		writel(readl(reg_base + CQSPI_REG_CONFIG),
++		       reg_base + CQSPI_REG_CONFIG);
+ 
+ 	/*
+ 	 * On SoCFPGA platform reading the SRAM is slow due to
+@@ -727,8 +794,17 @@ static int cqspi_indirect_read_execute(struct cqspi_flash_pdata *f_pdata,
+ 		writel(CQSPI_REG_IRQ_WATERMARK, reg_base + CQSPI_REG_IRQMASK);
+ 
+ 	reinit_completion(&cqspi->transfer_complete);
++
++	/* Flush APB-AHB bridge before START to ensure IRQMASK is visible on AHB side. */
++	if (cqspi->apb_ahb_hazard)
++		writel(readl(reg_base + CQSPI_REG_CONFIG),
++		       reg_base + CQSPI_REG_CONFIG);
++
+ 	writel(CQSPI_REG_INDIRECTRD_START_MASK,
+ 	       reg_base + CQSPI_REG_INDIRECTRD);
++	/* Dummy readback after START to drain the APB write pipeline. */
++	if (cqspi->apb_ahb_hazard)
++		readl(reg_base + CQSPI_REG_INDIRECTRD);
+ 
+ 	while (remaining > 0) {
+ 		if (!wait_for_completion_timeout(&cqspi->transfer_complete,
+@@ -1018,18 +1094,68 @@ static int cqspi_indirect_write_execute(struct cqspi_flash_pdata *f_pdata,
+ 	struct device *dev = &cqspi->pdev->dev;
+ 	void __iomem *reg_base = cqspi->iobase;
+ 	unsigned int remaining = n_tx;
+-	unsigned int write_bytes;
++	size_t write_words, mod_bytes;
+ 	int ret;
+ 
+ 	writel(to_addr, reg_base + CQSPI_REG_INDIRECTWRSTARTADDR);
+ 	writel(remaining, reg_base + CQSPI_REG_INDIRECTWRBYTES);
+ 
++	/*
++	 * reinit_completion() must come before clearing IRQSTATUS and
++	 * re-enabling IRQMASK.  If the previous page's threaded handler is
++	 * delayed by the scheduler and calls complete() after we clear
++	 * IRQSTATUS but before reinit_completion(), that spurious complete()
++	 * is lost and this page's wait_for_completion_timeout() will block
++	 * until the real IND_COMP fires — which is correct.  If instead
++	 * reinit_completion() ran after the spurious complete(), it would wipe
++	 * the counter and the real IND_COMP might still arrive, so no harm
++	 * either way.  The dangerous race is reinit_completion() running AFTER
++	 * this page's real IND_COMP has been delivered, which cannot happen
++	 * because IRQMASK is still 0 at this point.
++	 */
++	reinit_completion(&cqspi->transfer_complete);
++
+ 	/* Clear all interrupts. */
+ 	writel(CQSPI_IRQ_STATUS_MASK, reg_base + CQSPI_REG_IRQSTATUS);
++	/*
++	 * On Pensando/Salina, APB writes may not propagate to the AHB side
++	 * immediately.  If IND_COMP from the previous page (or a preceding
++	 * read operation) remains set in the AHB-side IRQSTATUS when IRQMASK
++	 * is re-enabled below, the controller immediately asserts the interrupt
++	 * line causing a spurious interrupt.  A CONFIG read-modify-write stalls
++	 * the APB bus until all pending writes — including the IRQSTATUS clear
++	 * — have been committed to the AHB side, ensuring the interrupt line is
++	 * deasserted before IRQMASK is written.  A simple readl() is
++	 * insufficient as it only flushes to the APB side of the bridge, not
++	 * necessarily through to AHB.
++	 */
++	if (cqspi->apb_ahb_hazard)
++		writel(readl(reg_base + CQSPI_REG_CONFIG),
++		       reg_base + CQSPI_REG_CONFIG);
+ 
+-	writel(CQSPI_IRQ_MASK_WR, reg_base + CQSPI_REG_IRQMASK);
++	/*
++	 * Enable only IND_COMP (and UNDERFLOW for error detection).
++	 * Do not enable WATERMARK — the write WATERMARK threshold defaults
++	 * to 0 so WATERMARK never fires for writes.  Instead we push all
++	 * data into the SRAM immediately after START (spi-nor limits each
++	 * call to one page ≤ 256 bytes, well within the SRAM write partition
++	 * of fifo_depth/2 words), then wait for the single IND_COMP interrupt.
++	 */
++	writel(CQSPI_REG_IRQ_IND_COMP | CQSPI_REG_IRQ_UNDERFLOW,
++	       reg_base + CQSPI_REG_IRQMASK);
++
++	/*
++	 * On Pensando/Salina the APB and AHB sides of the controller have a
++	 * bridge hazard: APB writes (STARTADDR, NBYTES, IRQMASK) may not have
++	 * propagated to the AHB-side controller logic before the START bit is
++	 * seen.  A CONFIG read-modify-write (a functional NOP) immediately
++	 * before asserting START stalls the APB bus long enough to drain the
++	 * bridge pipeline.
++	 */
++	if (cqspi->apb_ahb_hazard)
++		writel(readl(reg_base + CQSPI_REG_CONFIG),
++		       reg_base + CQSPI_REG_CONFIG);
+ 
+-	reinit_completion(&cqspi->transfer_complete);
+ 	writel(CQSPI_REG_INDIRECTWR_START_MASK,
+ 	       reg_base + CQSPI_REG_INDIRECTWR);
+ 	/*
+@@ -1043,58 +1169,63 @@ static int cqspi_indirect_write_execute(struct cqspi_flash_pdata *f_pdata,
+ 		ndelay(cqspi->wr_delay);
+ 
+ 	/*
+-	 * If a hazard exists between the APB and AHB interfaces, perform a
+-	 * dummy readback from the controller to ensure synchronization.
++	 * Dummy readback of INDIRECTWR after START to stall the APB bus
++	 * until the AHB-side controller has registered the start condition.
+ 	 */
+ 	if (cqspi->apb_ahb_hazard)
+ 		readl(reg_base + CQSPI_REG_INDIRECTWR);
+ 
+-	while (remaining > 0) {
+-		size_t write_words, mod_bytes;
+-
+-		write_bytes = remaining;
+-		write_words = write_bytes / 4;
+-		mod_bytes = write_bytes % 4;
+-		/* Write 4 bytes at a time then single bytes. */
+-		if (write_words) {
+-			iowrite32_rep(cqspi->ahb_base, txbuf, write_words);
+-			txbuf += (write_words * 4);
+-		}
+-		if (mod_bytes) {
+-			unsigned int temp = 0xFFFFFFFF;
+-
+-			memcpy(&temp, txbuf, mod_bytes);
+-			iowrite32(temp, cqspi->ahb_base);
+-			txbuf += mod_bytes;
+-		}
+-
+-		if (!wait_for_completion_timeout(&cqspi->transfer_complete,
+-						 msecs_to_jiffies(CQSPI_TIMEOUT_MS))) {
+-			dev_err(dev, "Indirect write timeout\n");
+-			ret = -ETIMEDOUT;
+-			goto failwr;
+-		}
+-
+-		remaining -= write_bytes;
++	/* Push all data into the write SRAM now — do not wait for WATERMARK. */
++	write_words = remaining / 4;
++	mod_bytes = remaining % 4;
++	if (write_words) {
++		iowrite32_rep(cqspi->ahb_base, txbuf, write_words);
++		txbuf += write_words * 4;
++	}
++	if (mod_bytes) {
++		unsigned int temp = 0xFFFFFFFF;
+ 
+-		if (remaining > 0)
+-			reinit_completion(&cqspi->transfer_complete);
++		memcpy(&temp, txbuf, mod_bytes);
++		iowrite32(temp, cqspi->ahb_base);
+ 	}
+ 
+-	/* Check indirect done status */
+-	ret = cqspi_wait_for_bit(reg_base + CQSPI_REG_INDIRECTWR,
+-				 CQSPI_REG_INDIRECTWR_DONE_MASK, 0);
+-	if (ret) {
+-		dev_err(dev, "Indirect write completion error (%i)\n", ret);
++	/*
++	 * Wait for IND_COMP interrupt.  On Pensando/Salina the APB-AHB bridge
++	 * can intermittently lose the interrupt even though the flash write
++	 * completes successfully.  Use a short timeout (well above the ~50µs
++	 * SPI transfer time) and fall back to polling INDIRECTWR_DONE directly
++	 * — the same mechanism that the reliable polling-only path uses.
++	 */
++	if (!wait_for_completion_timeout(&cqspi->transfer_complete,
++					 msecs_to_jiffies(cqspi->apb_ahb_hazard ?
++							  5 : CQSPI_TIMEOUT_MS))) {
++		if (cqspi->apb_ahb_hazard) {
++			u32 wr_reg;
++
++			/* Disable interrupt before polling to prevent races. */
++			writel(0, reg_base + CQSPI_REG_IRQMASK);
++
++			ret = readl_poll_timeout(reg_base + CQSPI_REG_INDIRECTWR,
++						 wr_reg,
++						 wr_reg & CQSPI_REG_INDIRECTWR_DONE_MASK,
++						 10, CQSPI_TIMEOUT_MS * 1000);
++			if (ret) {
++				dev_err(dev, "Indirect write timeout\n");
++				goto failwr;
++			}
++			goto clearwr;
++		}
++		dev_err(dev, "Indirect write timeout\n");
++		ret = -ETIMEDOUT;
+ 		goto failwr;
+ 	}
+ 
+ 	/* Disable interrupt. */
+ 	writel(0, reg_base + CQSPI_REG_IRQMASK);
+ 
++clearwr:
+ 	/* Clear indirect completion status */
+ 	writel(CQSPI_REG_INDIRECTWR_DONE_MASK, reg_base + CQSPI_REG_INDIRECTWR);
+-
+ 	cqspi_wait_idle(cqspi);
+ 
+ 	return 0;
+@@ -1851,8 +1982,19 @@ static int cqspi_probe(struct platform_device *pdev)
+ 		}
+ 	}
+ 
+-	ret = devm_request_irq(dev, irq, cqspi_irq_handler, 0,
+-			       pdev->name, cqspi);
++	/*
++	 * On Pensando/Salina register a threaded IRQ so the handler can
++	 * udelay() while waiting for the APB-AHB bridge to propagate the
++	 * completion event into IRQSTATUS.  IRQF_ONESHOT keeps the interrupt
++	 * line masked until the thread finishes.
++	 */
++	if (cqspi->apb_ahb_hazard)
++		ret = devm_request_threaded_irq(dev, irq, cqspi_irq_handler,
++						cqspi_irq_thread, IRQF_ONESHOT,
++						pdev->name, cqspi);
++	else
++		ret = devm_request_irq(dev, irq, cqspi_irq_handler, 0,
++				       pdev->name, cqspi);
+ 	if (ret) {
+ 		dev_err(dev, "Cannot request IRQ.\n");
+ 		goto probe_reset_failed;
+diff --git a/drivers/spi/spi-cpld-spimux.c b/drivers/spi/spi-cpld-spimux.c
+new file mode 100644
+index 000000000000..6e2a771f046b
+--- /dev/null
++++ b/drivers/spi/spi-cpld-spimux.c
+@@ -0,0 +1,244 @@
++// SPDX-License-Identifier: GPL-2.0-only
++/*
++ * Copyright 2026 Advanced Micro Devices, Inc.
++ */
++
++/*
++ * AMD Pensando Salina CPLD SPI mux
++ *
++ * Background (Elba vs Salina)
++ * ---------------------------
++ *
++ * On Elba, the SPI controller exposes four logical chip selects:
++ * CS0 to the CPLD registers and CS1-CS3 to devices.
++ *
++ *   CS0, CS1  - controlled via SPICS override register
++ *   CS2, CS3  - controlled via GPIOs (cs-gpios in DT)
++ *
++ * On Salina, the wiring is different:
++ *
++ *   - Only CS0 and CS1 are physically used (via SPICS override)
++ *   - CS2 and CS3 are not used as independent chip selects
++ *   - CS0 selects the CPLD registers (the same as Elba).
++ *   - CPLD register DPU_CSMAP selects the other devices.
++ *
++ * CPLD mux operation via CPLD register 0x05 (DPU_CSMAP)
++ * -----------------------------------------------------
++ *
++ *   CPLD register 0x05 (DPU_CSMAP)
++ *
++ *   Value  Description
++ *   -----  ------------------------------------------
++ *   0x00   Disabled
++ *   0x01   CPLD internal flash
++ *   0x02   Lattice RD1173 (SPI-to-I2C bridge)
++ *   0x03   SMBus over SPI
++ *
++ * Accessing a downstream device requires:
++ *
++ *   1. Write the selector via CS0 (CPLD register space)
++ *   2. Perform the SPI transfer via CS1 (shared data path)
++ *
++ * SPI controller behavior
++ * -----------------------
++ *
++ * The DesignWare SPI controller still requires a "native" chip select
++ * to be asserted to start the serial engine. This driver reuses the
++ * existing Elba logic:
++ *
++ *   - The controller is always kicked using native CS0
++ *   - SPICS override selects the actual external chip (CS0 or CS1)
++ *
++ * Effectively:
++ *
++ *   - CS0 => CPLD register space
++ *   - CS1 => multiplexed data path
++ *   - CS2/CS3 => unused on Salina
++ *
++ * Virtual SPI controller
++ * ----------------------
++ *
++ * To present a standard SPI interface to clients, this driver creates
++ * a virtual SPI controller:
++ *
++ *   Virtual CS    Operation
++ *   ----------    --------------------------------------------
++ *   CS0           Direct access to CPLD register space (CS0)
++ *   CS1..CS3      1) Write CSMAP via CS0
++ *                 2) Forward transfer via physical CS1
++ *
++ * This keeps SPI client drivers (e.g. RD1173) unaware of the CPLD mux
++ * and avoids embedding mux logic into individual drivers.
++ */
++
++#include <linux/module.h>
++#include <linux/spi/spi.h>
++#include <linux/of.h>
++#include <linux/of_device.h>
++
++/* CPLD definitions */
++#define CPLD_CMD_WR	0x02
++#define CPLD_REG_CSMAP	0x05
++
++struct cpld_mux {
++	struct spi_controller *ctlr;
++	struct spi_device *parent_spi;	/* physical CS0 device */
++	struct mutex lock;
++	u8 current_cs;
++};
++
++static int cpld_mux_select(struct cpld_mux *mux, u8 cs)
++{
++	u8 tx[3] = { CPLD_CMD_WR, CPLD_REG_CSMAP, cs };
++	struct spi_transfer t = {
++		.tx_buf = tx,
++		.len = 3,
++	};
++	struct spi_message m;
++	int ret;
++
++	if (mux->current_cs == cs)
++		return 0;
++
++	spi_message_init(&m);
++	spi_message_add_tail(&t, &m);
++
++	ret = spi_sync(mux->parent_spi, &m);
++	if (!ret)
++		mux->current_cs = cs;
++
++	return 0;
++}
++
++/* Safely forward a SPI message to the parent controller */
++static int cpld_mux_forward(struct cpld_mux *mux,
++			    struct spi_message *msg)
++{
++	struct spi_message new_msg;
++	int ret;
++
++	spi_message_init(&new_msg);
++
++	/* Move transfers from original message */
++	list_splice_tail_init(&msg->transfers, &new_msg.transfers);
++
++	/* Execute on parent SPI device */
++	ret = spi_sync(mux->parent_spi, &new_msg);
++
++	/* Copy results back */
++	msg->status = new_msg.status;
++	msg->actual_length = new_msg.actual_length;
++
++	return ret;
++}
++
++static int cpld_mux_transfer_one_message(struct spi_controller *ctlr,
++					 struct spi_message *msg)
++{
++	struct cpld_mux *mux = spi_controller_get_devdata(ctlr);
++	struct spi_device *spi = msg->spi;
++	int cs = spi_get_chipselect(spi, 0);
++	int ret;
++
++	mutex_lock(&mux->lock);
++
++	if (cs == 0) {
++		/* Direct pass-through to CPLD register space */
++		ret = cpld_mux_forward(mux, msg);
++	} else {
++		/*
++		 * Route via CPLD mux:
++		 *  - write CSMAP register (CS0)
++		 *  - send data via CS1
++		 */
++
++		/* Select CPLD target */
++		ret = cpld_mux_select(mux, cs);
++		if (ret) {
++			dev_err(&spi->dev, "mux select failed for CS%d\n", cs);
++			goto out;
++		}
++
++		/* Temporarily force CS1 to set DPU_CSMAP */
++		spi_set_chipselect(mux->parent_spi, 0, 1);
++
++		/* Forward full message */
++		ret = cpld_mux_forward(mux, msg);
++
++		/* Restore CS0 */
++		spi_set_chipselect(mux->parent_spi, 0, 0);
++	}
++
++out:
++	mutex_unlock(&mux->lock);
++
++	spi_finalize_current_message(ctlr);
++
++	return ret;
++}
++
++static int cpld_mux_setup(struct spi_device *spi)
++{
++	return 0;
++}
++
++static int cpld_mux_probe(struct spi_device *spi)
++{
++	struct spi_controller *ctlr;
++	struct cpld_mux *mux;
++	int ret;
++
++	ctlr = spi_alloc_master(&spi->dev, sizeof(*mux));
++	if (!ctlr)
++		return -ENOMEM;
++
++	mux = spi_controller_get_devdata(ctlr);
++	mux->ctlr = ctlr;
++	mux->parent_spi = spi;	/* physical CS0 path */
++	mux->current_cs = 0xff;
++	mutex_init(&mux->lock);
++
++	ctlr->mode_bits = SPI_MODE_0;
++	ctlr->num_chipselect = 4;
++	ctlr->setup = cpld_mux_setup;
++	ctlr->transfer_one_message = cpld_mux_transfer_one_message;
++	ctlr->dev.of_node = spi->dev.of_node;
++
++	ret = spi_register_controller(ctlr);
++	if (ret) {
++		spi_controller_put(ctlr);
++		return ret;
++	}
++
++	spi_set_drvdata(spi, mux);
++
++	dev_dbg(&spi->dev, "CPLD SPI mux initialized\n");
++
++	return 0;
++}
++
++static void cpld_mux_remove(struct spi_device *spi)
++{
++	struct cpld_mux *mux = spi_get_drvdata(spi);
++
++	spi_unregister_controller(mux->ctlr);
++}
++
++static const struct of_device_id cpld_mux_of_match[] = {
++	{ .compatible = "amd,pensando-cpld-spimux" },
++	{ }
++};
++MODULE_DEVICE_TABLE(of, cpld_mux_of_match);
++
++static struct spi_driver cpld_mux_driver = {
++	.driver = {
++		.name = "cpld-spimux",
++		.of_match_table = cpld_mux_of_match,
++	},
++	.probe = cpld_mux_probe,
++	.remove = cpld_mux_remove,
++};
++
++module_spi_driver(cpld_mux_driver);
++
++MODULE_LICENSE("GPL");
+diff --git a/drivers/spi/spi-dw-mmio.c b/drivers/spi/spi-dw-mmio.c
+index 02a4f1900531..cb87d6da0159 100644
+--- a/drivers/spi/spi-dw-mmio.c
++++ b/drivers/spi/spi-dw-mmio.c
+@@ -62,7 +62,7 @@ struct dw_spi_mscc {
+  *      |  cs1   cs1_ovr   cs0   cs0_ovr
+  */
+ #ifdef CONFIG_ARCH_PENSANDO_SALINA_SOC
+-#define ELBA_SPICS_REG			0x66c
++#define ELBA_SPICS_REG			0x668
+ #else
+ #define ELBA_SPICS_REG			0x2468
+ #endif
+-- 
+2.25.1
+

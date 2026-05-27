@@ -1,0 +1,113 @@
+From 53005d27b6a8f557ae680c8cc715f529c6323a53 Mon Sep 17 00:00:00 2001
+From: rahshekh <rahulshekhar@pensando.io>
+Date: Tue, 26 May 2026 14:38:23 -0700
+Subject: [PATCH 8/8] arm64: configs: salina/goldfw defconfig updates
+
+- Porting Elba dm_crypt and goldfw size optimization to Leni
+- Add missing configs to salina gold defconfig
+- arm64: configs: salina: enable INA3221 power monitor
+- Add mctp and designware slave to goldfw defconfig
+- arm64: configs: salina: enable RESET_ELBASR for eMMC reset support
+---
+ arch/arm64/configs/salina_defconfig      |  3 ++-
+ arch/arm64/configs/salina_gold_defconfig | 10 +++++++++-
+ 2 files changed, 11 insertions(+), 2 deletions(-)
+
+diff --git a/arch/arm64/configs/salina_defconfig b/arch/arm64/configs/salina_defconfig
+index e98f9f98f3a4..f2803ab192d8 100644
+--- a/arch/arm64/configs/salina_defconfig
++++ b/arch/arm64/configs/salina_defconfig
+@@ -126,6 +126,7 @@ CONFIG_EEPROM_AT24=y
+ CONFIG_EEPROM_AT25=y
+ CONFIG_MD=y
+ CONFIG_BLK_DEV_DM=y
++CONFIG_DM_CRYPT=y
+ CONFIG_DM_VERITY=y
+ CONFIG_NETDEVICES=y
+ CONFIG_BONDING=y
+@@ -228,6 +229,7 @@ CONFIG_WATCHDOG=y
+ CONFIG_SOFT_WATCHDOG=y
+ CONFIG_DW_WATCHDOG=y
+ CONFIG_MFD_PENSANDO_ELBASR=y
++CONFIG_RESET_ELBASR=y
+ # CONFIG_HID is not set
+ # CONFIG_USB_SUPPORT is not set
+ CONFIG_MMC=y
+@@ -252,7 +254,6 @@ CONFIG_ARCH_PENSANDO_SALINA_SOC=y
+ CONFIG_PENSANDO_SOC_BSM_ENABLE=y
+ CONFIG_PENSANDO_SOC_PENFW=y
+ CONFIG_EXTCON=y
+-CONFIG_RESET_SALINASR=y
+ CONFIG_GENERIC_PHY=y
+ CONFIG_ARM_CMN=y
+ CONFIG_RAS=y
+diff --git a/arch/arm64/configs/salina_gold_defconfig b/arch/arm64/configs/salina_gold_defconfig
+index dc5af53142e7..bc25795c1cc4 100644
+--- a/arch/arm64/configs/salina_gold_defconfig
++++ b/arch/arm64/configs/salina_gold_defconfig
+@@ -25,6 +25,7 @@ CONFIG_SCHED_AUTOGROUP=y
+ CONFIG_BLK_DEV_INITRD=y
+ CONFIG_INITRAMFS_SOURCE="rootfs.cpio"
+ CONFIG_INITRAMFS_COMPRESSION_XZ=y
++CONFIG_CC_OPTIMIZE_FOR_SIZE=y
+ CONFIG_PROFILING=y
+ CONFIG_CRASH_DUMP=y
+ CONFIG_ARCH_PENSANDO=y
+@@ -114,6 +115,7 @@ CONFIG_IP_NF_TARGET_ECN=y
+ CONFIG_IP_NF_TARGET_TTL=y
+ CONFIG_VLAN_8021Q=y
+ CONFIG_NET_PKTGEN=y
++CONFIG_MCTP=y
+ # CONFIG_WIRELESS is not set
+ CONFIG_PCI=y
+ CONFIG_DEVTMPFS=y
+@@ -129,6 +131,7 @@ CONFIG_EEPROM_AT24=y
+ CONFIG_EEPROM_AT25=y
+ CONFIG_MD=y
+ CONFIG_BLK_DEV_DM=y
++CONFIG_DM_CRYPT=y
+ CONFIG_DM_VERITY=y
+ CONFIG_NETDEVICES=y
+ CONFIG_BONDING=y
+@@ -192,6 +195,7 @@ CONFIG_STMMAC_ETH=y
+ # CONFIG_NET_VENDOR_VIA is not set
+ # CONFIG_NET_VENDOR_WIZNET is not set
+ # CONFIG_NET_VENDOR_XILINX is not set
++CONFIG_MCTP_TRANSPORT_I2C=y
+ # CONFIG_WLAN is not set
+ # CONFIG_INPUT_KEYBOARD is not set
+ # CONFIG_INPUT_MOUSE is not set
+@@ -206,10 +210,12 @@ CONFIG_SERIAL_OF_PLATFORM=y
+ # CONFIG_DEVPORT is not set
+ CONFIG_I2C=y
+ CONFIG_I2C_CHARDEV=y
++CONFIG_I2C_DESIGNWARE_SLAVE=y
+ CONFIG_I2C_DESIGNWARE_PLATFORM=y
+ CONFIG_I2C_RD1173=y
+ CONFIG_SPI=y
+ CONFIG_SPI_CADENCE_QUADSPI=y
++CONFIG_SPI_CPLD_SPIMUX=y
+ CONFIG_SPI_DESIGNWARE=y
+ CONFIG_SPI_DW_MMIO=y
+ CONFIG_SPI_SPIDEV=y
+@@ -219,6 +225,7 @@ CONFIG_SENSORS_LM90=y
+ CONFIG_PMBUS=y
+ CONFIG_SENSORS_LTC2978=y
+ CONFIG_SENSORS_TPS53679=y
++CONFIG_SENSORS_INA3221=y
+ CONFIG_SENSORS_TMP421=y
+ CONFIG_THERMAL=y
+ # CONFIG_THERMAL_OF is not set
+@@ -226,7 +233,8 @@ CONFIG_WATCHDOG=y
+ CONFIG_WATCHDOG_SYSFS=y
+ CONFIG_SOFT_WATCHDOG=y
+ CONFIG_DW_WATCHDOG=y
+-CONFIG_RESET_SALINASR=y
++CONFIG_MFD_PENSANDO_ELBASR=y
++CONFIG_RESET_ELBASR=y
+ # CONFIG_HID is not set
+ # CONFIG_USB_SUPPORT is not set
+ CONFIG_MMC=y
+-- 
+2.25.1
+

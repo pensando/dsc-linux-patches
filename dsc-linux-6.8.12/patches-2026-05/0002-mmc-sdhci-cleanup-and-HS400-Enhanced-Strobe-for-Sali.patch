@@ -1,0 +1,63 @@
+From 72a205180f38c1dfa8b6faa2f098ad405a7c3ce4 Mon Sep 17 00:00:00 2001
+From: rahshekh <rahulshekhar@pensando.io>
+Date: Tue, 26 May 2026 14:30:18 -0700
+Subject: [PATCH 2/8] mmc: sdhci cleanup and HS400 Enhanced Strobe for Salina
+
+- delete workaround sdhci-giglio.c (interrupt fixed via DTS)
+- mmc: sdhci-cadence: Salina enable HS400 Enhanced Strobe
+---
+ arch/arm64/boot/dts/amd/salina-asic.dtsi | 4 +++-
+ drivers/mmc/host/sdhci-cadence.c         | 4 ++++
+ 2 files changed, 7 insertions(+), 1 deletion(-)
+
+diff --git a/arch/arm64/boot/dts/amd/salina-asic.dtsi b/arch/arm64/boot/dts/amd/salina-asic.dtsi
+index d17bf919741a..b87ae9ecf192 100644
+--- a/arch/arm64/boot/dts/amd/salina-asic.dtsi
++++ b/arch/arm64/boot/dts/amd/salina-asic.dtsi
+@@ -169,11 +169,13 @@ emmc0: sdio-host-chip@600000 {
+ 			mmc-ddr-1_8v;
+ 			mmc-hs200-1_8v;
+ 			mmc-hs400-1_8v;
++			mmc-hs400-enhanced-strobe;
+ 			cdns,phy-input-delay-sd-highspeed = <0x4>;
+ 			cdns,phy-input-delay-legacy = <0x4>;
++			cdns,phy-input-delay-mmc-ddr = <0x8>;
+ 			cdns,phy-input-delay-sd-uhs-sdr50 = <0x6>;
+ 			cdns,phy-input-delay-sd-uhs-ddr50 = <0x16>;
+-			cdns,phy-dll-delay-sdclk = <0x1f>;
++			cdns,phy-dll-delay-sdclk = <0x2f>;
+ 			status = "disabled";
+ 		};
+ 
+diff --git a/drivers/mmc/host/sdhci-cadence.c b/drivers/mmc/host/sdhci-cadence.c
+index 028ef63f379a..b2ec7f4769f1 100644
+--- a/drivers/mmc/host/sdhci-cadence.c
++++ b/drivers/mmc/host/sdhci-cadence.c
+@@ -311,6 +311,8 @@ static int sdhci_cdns_execute_tuning(struct sdhci_host *host, u32 opcode)
+ 		dev_err(mmc_dev(host->mmc), "no tuning point found\n");
+ 		return -EIO;
+ 	}
++	dev_info(mmc_dev(host->mmc), "tuning val %d, streak end %d, max %d\n",
++		 end_of_streak - max_streak / 2, end_of_streak, max_streak);
+ 
+ 	return sdhci_cdns_set_tune_val(host, end_of_streak - max_streak / 2);
+ }
+@@ -611,6 +613,7 @@ static const struct sdhci_ops sdhci_elba_ops = {
+ 	.get_timeout_clock = sdhci_cdns_get_timeout_clock,
+ 	.set_bus_width = sdhci_set_bus_width,
+ 	.reset = sdhci_reset,
++	.platform_execute_tuning = sdhci_cdns_execute_tuning,
+ 	.set_uhs_signaling = sdhci_cdns_set_uhs_signaling,
+ 	.adma_write_desc = elba_adma_write_desc,
+ };
+@@ -626,6 +629,7 @@ static const struct sdhci_ops sdhci_salina_ops = {
+ 	.get_timeout_clock = sdhci_cdns_get_timeout_clock,
+ 	.set_bus_width = sdhci_set_bus_width,
+ 	.reset = sdhci_reset,
++	.platform_execute_tuning = sdhci_cdns_execute_tuning,
+ 	.set_uhs_signaling = sdhci_cdns_set_uhs_signaling,
+ 	.adma_write_desc = elba_adma_write_desc,
+ };
+-- 
+2.25.1
+
