@@ -1,0 +1,158 @@
+From 33fea83664fd10b0326a2986237973fea3af4d8f Mon Sep 17 00:00:00 2001
+From: rahshekh <rahulshekhar@pensando.io>
+Date: Tue, 26 May 2026 14:29:43 -0700
+Subject: [PATCH 1/8] dts: Add Deschutes board support based on Giglio (#496)
+ (#510)
+
+---
+ arch/arm64/boot/dts/amd/Makefile              |  2 +-
+ .../dts/amd/giglio-deschutes-flash128.dts     | 27 ++++++++++++++++
+ arch/arm64/boot/dts/amd/giglio-deschutes.dtsi | 32 +++++++++++++++++++
+ drivers/hwmon/pmbus/tps53679.c                | 11 ++++++-
+ 4 files changed, 70 insertions(+), 2 deletions(-)
+ create mode 100644 arch/arm64/boot/dts/amd/giglio-deschutes-flash128.dts
+ create mode 100644 arch/arm64/boot/dts/amd/giglio-deschutes.dtsi
+
+diff --git a/arch/arm64/boot/dts/amd/Makefile b/arch/arm64/boot/dts/amd/Makefile
+index e125a23fc778..cb3884b28a34 100644
+--- a/arch/arm64/boot/dts/amd/Makefile
++++ b/arch/arm64/boot/dts/amd/Makefile
+@@ -1,6 +1,6 @@
+ # SPDX-License-Identifier: GPL-2.0
+ dtb-$(CONFIG_ARCH_PENSANDO) += elba-asic.dtb
+-dtb-$(CONFIG_ARCH_PENSANDO_GIGLIO_SOC) += giglio-asic.dtb
++dtb-$(CONFIG_ARCH_PENSANDO_GIGLIO_SOC) += giglio-asic.dtb giglio-deschutes-flash128.dtb
+ dtb-$(CONFIG_ARCH_PENSANDO_SALINA_SOC) += salina-asic.dtb \
+ 					  salina-a35-asic.dtb \
+ 					  salina-haps-4core.dtb \
+diff --git a/arch/arm64/boot/dts/amd/giglio-deschutes-flash128.dts b/arch/arm64/boot/dts/amd/giglio-deschutes-flash128.dts
+new file mode 100644
+index 000000000000..d99119f54230
+--- /dev/null
++++ b/arch/arm64/boot/dts/amd/giglio-deschutes-flash128.dts
+@@ -0,0 +1,27 @@
++// SPDX-License-Identifier: GPL-2.0
++
++/dts-v1/;
++
++/ {
++	model = "Giglio ASIC Board";
++	compatible = "pensando,giglio";
++
++	aliases {
++		serial0 = &uart0;
++		spi0 = &spi0;
++		spi1 = &qspi;
++	};
++
++	chosen {
++		stdout-path = "serial0:115200n8";
++	};
++};
++
++#include "giglio.dtsi"
++#include "elba-16core.dtsi"
++#include "elba-16core-spin-table.dtsi"
++#include "giglio-asic-common.dtsi"
++#include "giglio-deschutes.dtsi"
++#include "elba-flash128-parts.dtsi"
++#include "elba-asic-memory.dtsi"
++#include "elba-mdev.dtsi"
+diff --git a/arch/arm64/boot/dts/amd/giglio-deschutes.dtsi b/arch/arm64/boot/dts/amd/giglio-deschutes.dtsi
+new file mode 100644
+index 000000000000..14fb718d227d
+--- /dev/null
++++ b/arch/arm64/boot/dts/amd/giglio-deschutes.dtsi
+@@ -0,0 +1,32 @@
++// SPDX-License-Identifier: GPL-2.0
++
++&i2c0 {
++	clock-frequency = <100000>;
++	status = "okay";
++
++	regulator@60 {
++		compatible = "ti,tps53689";
++		reg = <0x60>;
++	};
++	vdd_vrm@62 {
++		compatible = "ti,tps53689";
++		reg = <0x62>;
++	};
++};
++
++&i2c2 {
++	clock-frequency = <100000>;
++	status = "okay";
++
++	temp-sensor@4c {
++		status = "disabled";
++	};
++
++	rtc@51 {
++		status = "disabled";
++	};
++
++	regulator@62 {
++		status = "disabled";
++	};
++};
+diff --git a/drivers/hwmon/pmbus/tps53679.c b/drivers/hwmon/pmbus/tps53679.c
+index 61cba9369e89..c94c4bd4f7bd 100644
+--- a/drivers/hwmon/pmbus/tps53679.c
++++ b/drivers/hwmon/pmbus/tps53679.c
+@@ -16,7 +16,7 @@
+ #include "pmbus.h"
+ 
+ enum chips {
+-	tps53647, tps53659, tps53667, tps53676, tps53679, tps53681, tps53688
++	tps53647, tps53659, tps53667, tps53676, tps53679, tps53681, tps53688, tps53689
+ };
+ 
+ #define TPS53647_PAGE_NUM		1
+@@ -29,6 +29,7 @@ enum chips {
+ #define TPS53679_PROT_VR13_10MV		0x04 /* VR13.0 mode, 10-mV DAC */
+ #define TPS53679_PROT_IMVP8_5MV		0x05 /* IMVP8 mode, 5-mV DAC */
+ #define TPS53679_PROT_VR13_5MV		0x07 /* VR13.0 mode, 5-mV DAC */
++#define TPS53679_PROT_VR14_10MV		0x16 /* VR14.0 mode, 10-mv DAC */
+ #define TPS53679_PAGE_NUM		2
+ 
+ #define TPS53681_DEVICE_ID		0x81
+@@ -56,6 +57,7 @@ static int tps53679_identify_mode(struct i2c_client *client,
+ 		switch (vout_params) {
+ 		case TPS53679_PROT_VR13_10MV:
+ 		case TPS53679_PROT_VR12_5_10MV:
++		case TPS53679_PROT_VR14_10MV:
+ 			info->vrm_version[i] = vr13;
+ 			break;
+ 		case TPS53679_PROT_VR13_5MV:
+@@ -262,6 +264,11 @@ static int tps53679_probe(struct i2c_client *client)
+ 		info->pages = TPS53679_PAGE_NUM;
+ 		info->identify = tps53679_identify;
+ 		break;
++	case tps53689:
++		info->pages = TPS53679_PAGE_NUM;
++		info->identify = tps53679_identify;
++		info->format[PSC_VOLTAGE_OUT] = linear;
++		break;
+ 	case tps53681:
+ 		info->pages = TPS53679_PAGE_NUM;
+ 		info->phases[0] = 6;
+@@ -284,6 +291,7 @@ static const struct i2c_device_id tps53679_id[] = {
+ 	{"tps53679", tps53679},
+ 	{"tps53681", tps53681},
+ 	{"tps53688", tps53688},
++	{"tps53689", tps53689},
+ 	{}
+ };
+ 
+@@ -297,6 +305,7 @@ static const struct of_device_id __maybe_unused tps53679_of_match[] = {
+ 	{.compatible = "ti,tps53679", .data = (void *)tps53679},
+ 	{.compatible = "ti,tps53681", .data = (void *)tps53681},
+ 	{.compatible = "ti,tps53688", .data = (void *)tps53688},
++	{.compatible = "ti,tps53689", .data = (void *)tps53689},
+ 	{}
+ };
+ MODULE_DEVICE_TABLE(of, tps53679_of_match);
+-- 
+2.25.1
+

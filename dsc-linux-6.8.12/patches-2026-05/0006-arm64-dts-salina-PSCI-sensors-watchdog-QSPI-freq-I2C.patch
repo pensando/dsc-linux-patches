@@ -1,0 +1,876 @@
+From 020a4bd631b90afd1142916a07ed445015ad122e Mon Sep 17 00:00:00 2001
+From: rahshekh <rahulshekhar@pensando.io>
+Date: Tue, 26 May 2026 14:37:12 -0700
+Subject: [PATCH 6/8] arm64: dts: salina: PSCI, sensors, watchdog, QSPI freq,
+ I2C aliases, secure image
+
+- arm64: dts: salina: enable sensor and MCTP I2C busses
+- Added psci support for salina
+- Change the QSPI freq to 40Mhz
+- arm64: dts: salina: add INA3221 power monitor support
+- arm64: dts: salina: add watchdog nodes
+- arm64: dts: salina: disable unused i2c1 controller
+- I2C aliases to preserve existing I2C bus numbering, for mainfw
+- Create secure dts to create secure fit image
+---
+ arch/arm64/boot/dts/amd/Makefile              |   4 +-
+ .../boot/dts/amd/salina-16core-psci.dtsi      |  59 +++++
+ .../dts/amd/salina-16core-spin-table.dtsi     | 207 ++++--------------
+ arch/arm64/boot/dts/amd/salina-16core.dtsi    |  16 --
+ .../boot/dts/amd/salina-asic-common.dtsi      |  87 ++++++++
+ arch/arm64/boot/dts/amd/salina-asic-psci.dts  |  52 +++++
+ arch/arm64/boot/dts/amd/salina-asic.dts       |  28 +--
+ arch/arm64/boot/dts/amd/salina-asic.dtsi      |  56 +++++
+ .../arm64/boot/dts/amd/salina-haps-16core.dts |   1 +
+ arch/arm64/boot/dts/amd/salina-n1-common.dtsi |  14 +-
+ arch/arm64/boot/dts/amd/salina-secure.dts     |  61 ++++++
+ arch/arm64/configs/salina_defconfig           |   2 +-
+ 12 files changed, 382 insertions(+), 205 deletions(-)
+ create mode 100644 arch/arm64/boot/dts/amd/salina-16core-psci.dtsi
+ create mode 100644 arch/arm64/boot/dts/amd/salina-asic-common.dtsi
+ create mode 100644 arch/arm64/boot/dts/amd/salina-asic-psci.dts
+ create mode 100644 arch/arm64/boot/dts/amd/salina-secure.dts
+
+diff --git a/arch/arm64/boot/dts/amd/Makefile b/arch/arm64/boot/dts/amd/Makefile
+index cb3884b28a34..10f20f231618 100644
+--- a/arch/arm64/boot/dts/amd/Makefile
++++ b/arch/arm64/boot/dts/amd/Makefile
+@@ -5,5 +5,7 @@ dtb-$(CONFIG_ARCH_PENSANDO_SALINA_SOC) += salina-asic.dtb \
+ 					  salina-a35-asic.dtb \
+ 					  salina-haps-4core.dtb \
+ 					  salina-haps-16core.dtb \
+-					  salina-a35-haps.dtb
++					  salina-a35-haps.dtb \
++					  salina-asic-psci.dtb \
++					  salina-secure.dtb
+ dtb-$(CONFIG_ARCH_SEATTLE) += amd-overdrive-rev-b0.dtb amd-overdrive-rev-b1.dtb
+diff --git a/arch/arm64/boot/dts/amd/salina-16core-psci.dtsi b/arch/arm64/boot/dts/amd/salina-16core-psci.dtsi
+new file mode 100644
+index 000000000000..cd54e502892f
+--- /dev/null
++++ b/arch/arm64/boot/dts/amd/salina-16core-psci.dtsi
+@@ -0,0 +1,59 @@
++// SPDX-License-Identifier: (GPL-2.0-only or BSD-2-Clause)
++/*
++ * Copyright 2023-2024 Advanced Micro Devices, Inc.
++ */
++
++&cpu0 {
++	enable-method = "psci";
++};
++&cpu1 {
++	enable-method = "psci";
++};
++&cpu2 {
++	enable-method = "psci";
++};
++&cpu3 {
++	enable-method = "psci";
++};
++&cpu4 {
++	enable-method = "psci";
++};
++&cpu5 {
++	enable-method = "psci";
++};
++&cpu6 {
++	enable-method = "psci";
++};
++&cpu7 {
++	enable-method = "psci";
++};
++&cpu8 {
++	enable-method = "psci";
++};
++&cpu9 {
++	enable-method = "psci";
++};
++&cpu10 {
++	enable-method = "psci";
++};
++&cpu11 {
++	enable-method = "psci";
++};
++&cpu12 {
++	enable-method = "psci";
++};
++&cpu13 {
++	enable-method = "psci";
++};
++&cpu14 {
++	enable-method = "psci";
++};
++&cpu15 {
++	enable-method = "psci";
++};
++/ {
++	psci {
++		compatible = "arm,psci-0.2";
++		method = "smc";
++	};
++};
+diff --git a/arch/arm64/boot/dts/amd/salina-16core-spin-table.dtsi b/arch/arm64/boot/dts/amd/salina-16core-spin-table.dtsi
+index faa80d8bab98..692056a385b3 100644
+--- a/arch/arm64/boot/dts/amd/salina-16core-spin-table.dtsi
++++ b/arch/arm64/boot/dts/amd/salina-16core-spin-table.dtsi
+@@ -3,164 +3,51 @@
+  * Copyright 2023-2024 Advanced Micro Devices, Inc.
+  */
+ 
+-/ {
+-	cpus {
+-		#address-cells = <2>;
+-		#size-cells = <0>;
+-
+-		cpu-map {
+-			cluster0 {
+-				core0 { cpu = <&cpu0>; };
+-				core1 { cpu = <&cpu1>; };
+-			};
+-			cluster1 {
+-				core0 { cpu = <&cpu2>; };
+-				core1 { cpu = <&cpu3>; };
+-			};
+-			cluster2 {
+-				core0 { cpu = <&cpu4>; };
+-				core1 { cpu = <&cpu5>; };
+-			};
+-			cluster3 {
+-				core0 { cpu = <&cpu6>; };
+-				core1 { cpu = <&cpu7>; };
+-			};
+-			cluster4 {
+-				core0 { cpu = <&cpu8>; };
+-				core1 { cpu = <&cpu9>; };
+-			};
+-			cluster5 {
+-				core0 { cpu = <&cpu10>; };
+-				core1 { cpu = <&cpu11>; };
+-			};
+-			cluster6 {
+-				core0 { cpu = <&cpu12>; };
+-				core1 { cpu = <&cpu13>; };
+-			};
+-			cluster7 {
+-				core0 { cpu = <&cpu14>; };
+-				core1 { cpu = <&cpu15>; };
+-			};
+-		};
+-
+-		/* CLUSTER 0 */
+-		cpu0: cpu@0 {
+-			device_type = "cpu";
+-			compatible = "arm,neoverse-n1";
+-			reg = <0 0>;
+-			enable-method = "spin-table";
+-		};
+-
+-		cpu1: cpu@10000 {
+-			device_type = "cpu";
+-			compatible = "arm,neoverse-n1";
+-			reg = <0 0x10000>;
+-			enable-method = "spin-table";
+-		};
+-
+-		/* CLUSTER 1 */
+-		cpu2: cpu@20000 {
+-			device_type = "cpu";
+-			compatible = "arm,neoverse-n1";
+-			reg = <0 0x20000>;
+-			enable-method = "spin-table";
+-		};
+-
+-		cpu3: cpu@30000 {
+-			device_type = "cpu";
+-			compatible = "arm,neoverse-n1";
+-			reg = <0 0x30000>;
+-			enable-method = "spin-table";
+-		};
+-
+-		/* CLUSTER 2 */
+-		cpu4: cpu@40000 {
+-			device_type = "cpu";
+-			compatible = "arm,neoverse-n1";
+-			reg = <0 0x40000>;
+-			enable-method = "spin-table";
+-		};
+-
+-		cpu5: cpu@50000 {
+-			device_type = "cpu";
+-			compatible = "arm,neoverse-n1";
+-			reg = <0 0x50000>;
+-			enable-method = "spin-table";
+-		};
+-
+-		/* CLUSTER 3 */
+-		cpu6: cpu@60000 {
+-			device_type = "cpu";
+-			compatible = "arm,neoverse-n1";
+-			reg = <0 0x60000>;
+-			enable-method = "spin-table";
+-		};
+-
+-		cpu7: cpu@70000 {
+-			device_type = "cpu";
+-			compatible = "arm,neoverse-n1";
+-			reg = <0 0x70000>;
+-			enable-method = "spin-table";
+-		};
+-
+-		/* CLUSTER 4 */
+-		cpu8: cpu@80000 {
+-			device_type = "cpu";
+-			compatible = "arm,neoverse-n1";
+-			reg = <0 0x80000>;
+-			enable-method = "spin-table";
+-		};
+-
+-		cpu9: cpu@90000 {
+-			device_type = "cpu";
+-			compatible = "arm,neoverse-n1";
+-			reg = <0 0x90000>;
+-			enable-method = "spin-table";
+-		};
+-
+-		/* CLUSTER 5 */
+-		cpu10: cpu@a0000 {
+-			device_type = "cpu";
+-			compatible = "arm,neoverse-n1";
+-			reg = <0 0xa0000>;
+-			enable-method = "spin-table";
+-		};
+-
+-		cpu11: cpu@b0000 {
+-			device_type = "cpu";
+-			compatible = "arm,neoverse-n1";
+-			reg = <0 0xb0000>;
+-			enable-method = "spin-table";
+-		};
+-
+-		/* CLUSTER 6 */
+-		cpu12: cpu@c0000 {
+-			device_type = "cpu";
+-			compatible = "arm,neoverse-n1";
+-			reg = <0 0xc0000>;
+-			enable-method = "spin-table";
+-		};
+-
+-		cpu13: cpu@d0000 {
+-			device_type = "cpu";
+-			compatible = "arm,neoverse-n1";
+-			reg = <0 0xd0000>;
+-			enable-method = "spin-table";
+-		};
+-
+-		/* CLUSTER 7 */
+-		cpu14: cpu@e0000 {
+-			device_type = "cpu";
+-			compatible = "arm,neoverse-n1";
+-			reg = <0 0xe0000>;
+-			enable-method = "spin-table";
+-		};
+-
+-		cpu15: cpu@f0000 {
+-			device_type = "cpu";
+-			compatible = "arm,neoverse-n1";
+-			reg = <0 0xf0000>;
+-			enable-method = "spin-table";
+-		};
+-	};
++&cpu0 {
++	enable-method = "spin-table";
++};
++&cpu1 {
++	enable-method = "spin-table";
++};
++&cpu2 {
++	enable-method = "spin-table";
++};
++&cpu3 {
++	enable-method = "spin-table";
++};
++&cpu4 {
++	enable-method = "spin-table";
++};
++&cpu5 {
++	enable-method = "spin-table";
++};
++&cpu6 {
++	enable-method = "spin-table";
++};
++&cpu7 {
++	enable-method = "spin-table";
++};
++&cpu8 {
++	enable-method = "spin-table";
++};
++&cpu9 {
++	enable-method = "spin-table";
++};
++&cpu10 {
++	enable-method = "spin-table";
++};
++&cpu11 {
++	enable-method = "spin-table";
++};
++&cpu12 {
++	enable-method = "spin-table";
++};
++&cpu13 {
++	enable-method = "spin-table";
++};
++&cpu14 {
++	enable-method = "spin-table";
++};
++&cpu15 {
++	enable-method = "spin-table";
+ };
+diff --git a/arch/arm64/boot/dts/amd/salina-16core.dtsi b/arch/arm64/boot/dts/amd/salina-16core.dtsi
+index faa80d8bab98..0dc1f250423a 100644
+--- a/arch/arm64/boot/dts/amd/salina-16core.dtsi
++++ b/arch/arm64/boot/dts/amd/salina-16core.dtsi
+@@ -48,14 +48,12 @@ cpu0: cpu@0 {
+ 			device_type = "cpu";
+ 			compatible = "arm,neoverse-n1";
+ 			reg = <0 0>;
+-			enable-method = "spin-table";
+ 		};
+ 
+ 		cpu1: cpu@10000 {
+ 			device_type = "cpu";
+ 			compatible = "arm,neoverse-n1";
+ 			reg = <0 0x10000>;
+-			enable-method = "spin-table";
+ 		};
+ 
+ 		/* CLUSTER 1 */
+@@ -63,14 +61,12 @@ cpu2: cpu@20000 {
+ 			device_type = "cpu";
+ 			compatible = "arm,neoverse-n1";
+ 			reg = <0 0x20000>;
+-			enable-method = "spin-table";
+ 		};
+ 
+ 		cpu3: cpu@30000 {
+ 			device_type = "cpu";
+ 			compatible = "arm,neoverse-n1";
+ 			reg = <0 0x30000>;
+-			enable-method = "spin-table";
+ 		};
+ 
+ 		/* CLUSTER 2 */
+@@ -78,14 +74,12 @@ cpu4: cpu@40000 {
+ 			device_type = "cpu";
+ 			compatible = "arm,neoverse-n1";
+ 			reg = <0 0x40000>;
+-			enable-method = "spin-table";
+ 		};
+ 
+ 		cpu5: cpu@50000 {
+ 			device_type = "cpu";
+ 			compatible = "arm,neoverse-n1";
+ 			reg = <0 0x50000>;
+-			enable-method = "spin-table";
+ 		};
+ 
+ 		/* CLUSTER 3 */
+@@ -93,14 +87,12 @@ cpu6: cpu@60000 {
+ 			device_type = "cpu";
+ 			compatible = "arm,neoverse-n1";
+ 			reg = <0 0x60000>;
+-			enable-method = "spin-table";
+ 		};
+ 
+ 		cpu7: cpu@70000 {
+ 			device_type = "cpu";
+ 			compatible = "arm,neoverse-n1";
+ 			reg = <0 0x70000>;
+-			enable-method = "spin-table";
+ 		};
+ 
+ 		/* CLUSTER 4 */
+@@ -108,14 +100,12 @@ cpu8: cpu@80000 {
+ 			device_type = "cpu";
+ 			compatible = "arm,neoverse-n1";
+ 			reg = <0 0x80000>;
+-			enable-method = "spin-table";
+ 		};
+ 
+ 		cpu9: cpu@90000 {
+ 			device_type = "cpu";
+ 			compatible = "arm,neoverse-n1";
+ 			reg = <0 0x90000>;
+-			enable-method = "spin-table";
+ 		};
+ 
+ 		/* CLUSTER 5 */
+@@ -123,14 +113,12 @@ cpu10: cpu@a0000 {
+ 			device_type = "cpu";
+ 			compatible = "arm,neoverse-n1";
+ 			reg = <0 0xa0000>;
+-			enable-method = "spin-table";
+ 		};
+ 
+ 		cpu11: cpu@b0000 {
+ 			device_type = "cpu";
+ 			compatible = "arm,neoverse-n1";
+ 			reg = <0 0xb0000>;
+-			enable-method = "spin-table";
+ 		};
+ 
+ 		/* CLUSTER 6 */
+@@ -138,14 +126,12 @@ cpu12: cpu@c0000 {
+ 			device_type = "cpu";
+ 			compatible = "arm,neoverse-n1";
+ 			reg = <0 0xc0000>;
+-			enable-method = "spin-table";
+ 		};
+ 
+ 		cpu13: cpu@d0000 {
+ 			device_type = "cpu";
+ 			compatible = "arm,neoverse-n1";
+ 			reg = <0 0xd0000>;
+-			enable-method = "spin-table";
+ 		};
+ 
+ 		/* CLUSTER 7 */
+@@ -153,14 +139,12 @@ cpu14: cpu@e0000 {
+ 			device_type = "cpu";
+ 			compatible = "arm,neoverse-n1";
+ 			reg = <0 0xe0000>;
+-			enable-method = "spin-table";
+ 		};
+ 
+ 		cpu15: cpu@f0000 {
+ 			device_type = "cpu";
+ 			compatible = "arm,neoverse-n1";
+ 			reg = <0 0xf0000>;
+-			enable-method = "spin-table";
+ 		};
+ 	};
+ };
+diff --git a/arch/arm64/boot/dts/amd/salina-asic-common.dtsi b/arch/arm64/boot/dts/amd/salina-asic-common.dtsi
+new file mode 100644
+index 000000000000..db72a31c0c7c
+--- /dev/null
++++ b/arch/arm64/boot/dts/amd/salina-asic-common.dtsi
+@@ -0,0 +1,87 @@
++// SPDX-License-Identifier: (GPL-2.0-only or BSD-2-Clause)
++/*
++ * Copyright 2023-2024 Advanced Micro Devices, Inc.
++ */
++
++#include <dt-bindings/i2c/i2c.h>
++
++&spi0 {
++	status = "okay";
++};
++
++&spi1 {
++	status = "okay";
++};
++
++&emmc_clk {
++	clock-frequency = <208000000>;
++};
++
++&emmc0 {
++	bus-width = <8>;
++	cap-mmc-hw-reset;
++	reset-names = "hw";
++	status = "ok";
++};
++
++&i2c1 {
++	clock-frequency = <100000>;
++	status = "disabled";
++};
++
++&i2c2 {
++	clock-frequency = <100000>;
++	status = "okay";
++
++	temp-sensor@4c {
++		compatible = "ti,tmp451";
++		reg = <0x4c>;
++	};
++
++	ina3221@43 {
++		compatible = "ti,ina3221";
++		reg = <0x43>;
++		#address-cells = <1>;
++		#size-cells = <0>;
++
++		input@0 {
++			reg = <0>;
++			label = "P12VDIN";
++			shunt-resistor-micro-ohms = <2000>;
++		};
++
++		input@1 {
++			reg = <1>;
++			label = "V33";
++			shunt-resistor-micro-ohms = <1000>;
++		};
++
++		input@2 {
++			reg = <2>;
++			label = "VDDR";
++			shunt-resistor-micro-ohms = <1000>;
++		};
++	};
++
++	rtc@51 {
++		compatible = "nxp,pcf85263";
++		reg = <0x51>;
++	};
++
++	regulator@60 {
++		compatible = "ti,tps53659";
++		reg = <0x60>;
++	};
++};
++
++&i2c3 {
++	clock-frequency = <100000>;
++	multi-master;
++	mctp-controller;
++	status = "okay";
++
++	mctp@32 {
++		compatible = "mctp-i2c-controller";
++		reg = <(0x32 | I2C_OWN_SLAVE_ADDRESS)>;
++	};
++};
+diff --git a/arch/arm64/boot/dts/amd/salina-asic-psci.dts b/arch/arm64/boot/dts/amd/salina-asic-psci.dts
+new file mode 100644
+index 000000000000..87d77d99a92a
+--- /dev/null
++++ b/arch/arm64/boot/dts/amd/salina-asic-psci.dts
+@@ -0,0 +1,52 @@
++// SPDX-License-Identifier: (GPL-2.0-only or BSD-2-Clause)
++/*
++ * Device Tree file for AMD Pensando Salina Board.
++ *
++ * Copyright 2023-2024 Advanced Micro Devices, Inc.
++ */
++
++/dts-v1/;
++
++#include "salina-asic.dtsi"
++#include "salina-16core.dtsi"
++#include "salina-16core-psci.dtsi"
++#include "salina-n1-common.dtsi"
++#include "salina-n1-flash-parts.dtsi"
++#include "elba-asic-memory.dtsi"
++#include "elba-mdev.dtsi"
++#include "salina-asic-common.dtsi"
++
++/ {
++	model = "Salina ASIC Board";
++	compatible = "pensando,salina";
++
++	aliases {
++		serial1 = &uart1;
++		spi0 = &spi0;
++		spi1 = &spi1;
++		i2c0 = &i2c1;	/* i2c@20000 -> Linux i2c-0 */
++		i2c1 = &i2c2;   /* i2c@30000 -> Linux i2c-1 (Sensors) */
++		i2c2 = &i2c3;   /* i2c@40000 -> Linux i2c-2 (MCTP) */
++	};
++
++	chosen {
++		stdout-path = "serial1:115200n8";
++	};
++
++	tawkipc {
++		compatible = "amd,tawk-ipc";
++		peer-id = <1>;
++		#address-cells = <2>;
++		#size-cells = <1>;
++		reg = <0x0 0x0 0x0 0x0>,  /* doorbells */
++			<0x0 0x0 0x0 0x0>, /* msix-like table */
++			<0x47 0xe1d2b100 0x0 0x8>,  /* reset signal registers */
++			<0x47 0xe1d2c100 0x0 0x10>,     /* mailbox control registers */
++			<0x47 0xe1d2d100 0x0 0x800>;    /* mailbox buffers */
++		rst-sigs = <0x4 0x0>;
++		nmboxes = <2>;
++		mbox-ctl = <0x0 0x3>;
++		mbox-buf = <0x0 0xa 0x400>;
++		status = "okay";
++	};
++};
+diff --git a/arch/arm64/boot/dts/amd/salina-asic.dts b/arch/arm64/boot/dts/amd/salina-asic.dts
+index 3b3bc9fc83c7..6aec63a59a0c 100644
+--- a/arch/arm64/boot/dts/amd/salina-asic.dts
++++ b/arch/arm64/boot/dts/amd/salina-asic.dts
+@@ -9,10 +9,12 @@
+ 
+ #include "salina-asic.dtsi"
+ #include "salina-16core.dtsi"
++#include "salina-16core-spin-table.dtsi"
+ #include "salina-n1-common.dtsi"
+ #include "salina-n1-flash-parts.dtsi"
+ #include "elba-asic-memory.dtsi"
+ #include "elba-mdev.dtsi"
++#include "salina-asic-common.dtsi"
+ 
+ / {
+ 	model = "Salina ASIC Board";
+@@ -22,6 +24,9 @@ aliases {
+ 		serial1 = &uart1;
+ 		spi0 = &spi0;
+ 		spi1 = &spi1;
++		i2c0 = &i2c1;	/* i2c@20000 -> Linux i2c-0 */
++		i2c1 = &i2c2;   /* i2c@30000 -> Linux i2c-1 (Sensors) */
++		i2c2 = &i2c3;   /* i2c@40000 -> Linux i2c-2 (MCTP) */
+ 	};
+ 
+ 	chosen {
+@@ -45,26 +50,3 @@ tawkipc {
+ 		status = "okay";
+ 	};
+ };
+-&spi0 {
+-	status = "okay";
+-};
+-
+-&spi1 {
+-	status = "okay";
+-};
+-
+-&emmc_clk {
+-	clock-frequency = <208000000>;
+-};
+-
+-&emmc0 {
+-	bus-width = <8>;
+-	cap-mmc-hw-reset;
+-	reset-names = "hw";
+-	status = "ok";
+-};
+-
+-&i2c1 {
+-	clock-frequency = <100000>;
+-	status = "okay";
+-};
+diff --git a/arch/arm64/boot/dts/amd/salina-asic.dtsi b/arch/arm64/boot/dts/amd/salina-asic.dtsi
+index 6cef028b725f..3ba05acc6e0c 100644
+--- a/arch/arm64/boot/dts/amd/salina-asic.dtsi
++++ b/arch/arm64/boot/dts/amd/salina-asic.dtsi
+@@ -101,6 +101,30 @@ spi0: spi@b0000 {
+ 			status = "disabled";
+ 		};
+ 
++		i2c2: i2c@30000 {
++			compatible = "snps,designware-i2c";
++			reg = <0x0 0x30000 0x0 0x100>;
++			clocks = <&ahb_clk>;
++			#address-cells = <1>;
++			#size-cells = <0>;
++			i2c-sda-hold-time-ns = <480>;
++			snps,sda-timeout-ms = <750>;
++			interrupts = <GIC_SPI 9 IRQ_TYPE_LEVEL_HIGH>;
++			status = "disabled";
++		};
++
++		i2c3: i2c@40000 {
++			compatible = "snps,designware-i2c";
++			reg = <0x0 0x40000 0x0 0x100>;
++			clocks = <&ahb_clk>;
++			#address-cells = <1>;
++			#size-cells = <0>;
++			i2c-sda-hold-time-ns = <480>;
++			snps,sda-timeout-ms = <750>;
++			interrupts = <GIC_SPI 10 IRQ_TYPE_LEVEL_HIGH>;
++			status = "disabled";
++		};
++
+ 		spi1: spi@c0000 {
+ 			compatible = "amd,pensando-elba-spi";
+ 			reg = <0x0 0xc0000 0x0 0x100>;
+@@ -301,6 +325,38 @@ syscon: syscon@61000000 {
+ 			reg = <0x0 0x61000000 0x0 0x80000>;
+ 		};
+ 
++		wdt0: watchdog@50000 {
++			compatible = "snps,dw-wdt";
++			reg = <0x0 0x50000 0x0 0x100>;
++			clocks = <&ahb_clk>;
++			interrupts = <GIC_SPI 13 IRQ_TYPE_LEVEL_HIGH>;
++			status = "disabled";
++		};
++
++		wdt1: watchdog@60000 {
++			compatible = "snps,dw-wdt";
++			reg = <0x0 0x60000 0x0 0x100>;
++			clocks = <&ahb_clk>;
++			interrupts = <GIC_SPI 14 IRQ_TYPE_LEVEL_HIGH>;
++			status = "disabled";
++		};
++
++		wdt2: watchdog@70000 {
++			compatible = "snps,dw-wdt";
++			reg = <0x0 0x70000 0x0 0x100>;
++			clocks = <&ahb_clk>;
++			interrupts = <GIC_SPI 15 IRQ_TYPE_LEVEL_HIGH>;
++			status = "disabled";
++		};
++
++		wdt3: watchdog@80000 {
++			compatible = "snps,dw-wdt";
++			reg = <0x0 0x80000 0x0 0x100>;
++			clocks = <&ahb_clk>;
++			interrupts = <GIC_SPI 16 IRQ_TYPE_LEVEL_HIGH>;
++			status = "disabled";
++		};
++
+ 		panic: panicdump {
+ 			compatible = "pensando,capri-crash";
+ 			status = "disabled";
+diff --git a/arch/arm64/boot/dts/amd/salina-haps-16core.dts b/arch/arm64/boot/dts/amd/salina-haps-16core.dts
+index 5ff24af9bf2b..f1d9963ef0b5 100644
+--- a/arch/arm64/boot/dts/amd/salina-haps-16core.dts
++++ b/arch/arm64/boot/dts/amd/salina-haps-16core.dts
+@@ -8,6 +8,7 @@
+ /dts-v1/;
+ 
+ #include "salina-haps.dtsi"
++#include "salina-16core.dtsi"
+ #include "salina-16core-spin-table.dtsi"
+ #include "salina-haps-common.dtsi"
+ #include "elba-flash-parts.dtsi"
+diff --git a/arch/arm64/boot/dts/amd/salina-n1-common.dtsi b/arch/arm64/boot/dts/amd/salina-n1-common.dtsi
+index 8ca0c303dd27..fa327c2f92cc 100644
+--- a/arch/arm64/boot/dts/amd/salina-n1-common.dtsi
++++ b/arch/arm64/boot/dts/amd/salina-n1-common.dtsi
+@@ -19,6 +19,10 @@ &ref_clk {
+ 	clock-frequency = <100000000>;
+ };
+ 
++&wdt0 {
++	status = "okay";
++};
++
+ &gpio0 {
+ 	status = "ok";
+ };
+@@ -90,14 +94,16 @@ &qspi0 {
+ 	flash2: flash@0 {
+ 		compatible = "jedec,spi-nor";
+ 		reg = <0>;
+-		spi-max-frequency = <24000000>;
++		spi-max-frequency = <40000000>;
+ 		spi-rx-bus-width = <2>;
+ 		m25p,fast-read;
+-		cdns,read-delay = <0>;
+-		cdns,tshsl-ns = <0>;
++		cdns,read-delay = <6>;
++		cdns,tshsl-ns = <200>;
+ 		cdns,tsd2d-ns = <0>;
+ 		cdns,tchsh-ns = <0>;
+ 		cdns,tslch-ns = <0>;
++		write-block-size = <1024>;
++		erase-block-size = <4096>;
+ 	};
+ };
+ 
+@@ -107,7 +113,7 @@ &qspi1 {
+ 	flash0: flash@0 {
+ 		compatible = "jedec,spi-nor";
+ 		reg = <0>;
+-		spi-max-frequency = <24000000>;
++		spi-max-frequency = <40000000>;
+ 		spi-rx-bus-width = <2>;
+ 		m25p,fast-read;
+ 		cdns,read-delay = <6>;
+diff --git a/arch/arm64/boot/dts/amd/salina-secure.dts b/arch/arm64/boot/dts/amd/salina-secure.dts
+new file mode 100644
+index 000000000000..c63cda3fb683
+--- /dev/null
++++ b/arch/arm64/boot/dts/amd/salina-secure.dts
+@@ -0,0 +1,61 @@
++// SPDX-License-Identifier: (GPL-2.0-only or BSD-2-Clause)
++/*
++ * Device Tree file for AMD Pensando Salina Board.
++ *
++ * Copyright 2026 Advanced Micro Devices, Inc.
++ */
++
++/dts-v1/;
++
++#include "salina-asic.dtsi"
++#include "salina-16core.dtsi"
++#include "salina-16core-psci.dtsi"
++#include "salina-n1-common.dtsi"
++#include "salina-n1-flash-parts.dtsi"
++#include "elba-asic-memory.dtsi"
++#include "elba-mdev.dtsi"
++#include "salina-asic-common.dtsi"
++
++/ {
++	model = "Salina ASIC Board";
++	compatible = "pensando,salina";
++
++	aliases {
++		serial1 = &uart1;
++		spi0 = &spi0;
++		spi1 = &spi1;
++		i2c0 = &i2c1;	/* i2c@20000 -> Linux i2c-0 */
++		i2c1 = &i2c2;   /* i2c@30000 -> Linux i2c-1 (Sensors) */
++		i2c2 = &i2c3;   /* i2c@40000 -> Linux i2c-2 (MCTP) */
++	};
++
++	chosen {
++		stdout-path = "serial1:115200n8";
++	};
++
++	tawkipc {
++		compatible = "amd,tawk-ipc";
++		peer-id = <1>;
++		#address-cells = <2>;
++		#size-cells = <1>;
++		reg = <0x0 0x0 0x0 0x0>,  /* doorbells */
++			<0x0 0x0 0x0 0x0>, /* msix-like table */
++			<0x47 0xe1d2b100 0x0 0x8>,  /* reset signal registers */
++			<0x47 0xe1d2c100 0x0 0x10>,     /* mailbox control registers */
++			<0x47 0xe1d2d100 0x0 0x800>;    /* mailbox buffers */
++		rst-sigs = <0x4 0x0>;
++		nmboxes = <2>;
++		mbox-ctl = <0x0 0x3>;
++		mbox-buf = <0x0 0xa 0x400>;
++		status = "okay";
++	};
++};
++
++/ {
++	firmware {
++		penfw {
++			compatible = "pensando,penfw";
++		};
++	};
++};
++
+diff --git a/arch/arm64/configs/salina_defconfig b/arch/arm64/configs/salina_defconfig
+index a5d96bc61d50..e98f9f98f3a4 100644
+--- a/arch/arm64/configs/salina_defconfig
++++ b/arch/arm64/configs/salina_defconfig
+@@ -208,7 +208,6 @@ CONFIG_I2C_CHARDEV=y
+ CONFIG_I2C_DESIGNWARE_SLAVE=y
+ CONFIG_I2C_DESIGNWARE_PLATFORM=y
+ CONFIG_I2C_RD1173=y
+-CONFIG_I2C_SLAVE_EEPROM=y
+ CONFIG_I2C_SLAVE_TESTUNIT=y
+ CONFIG_SPI=y
+ CONFIG_SPI_CADENCE_QUADSPI=y
+@@ -222,6 +221,7 @@ CONFIG_GPIO_SALINA_SPICS=y
+ CONFIG_SENSORS_LM90=y
+ CONFIG_PMBUS=y
+ CONFIG_SENSORS_TPS53679=y
++CONFIG_SENSORS_INA3221=y
+ CONFIG_THERMAL=y
+ # CONFIG_THERMAL_OF is not set
+ CONFIG_WATCHDOG=y
+-- 
+2.25.1
+
