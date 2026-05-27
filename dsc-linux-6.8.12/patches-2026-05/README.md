@@ -1,5 +1,6 @@
-This directory contains patches applying to a v6.8 kernel tree (dsc-linux-6.8),
-to support the AMD Pensando Salina ASIC based card.
+This directory is a continuation of patches from patches-2025-07;
+applying to a v6.8.12 kernel tree, to support the Pensando Salina,
+Elba and Giglio ASIC based cards.
 
 ## Commits
 **0001-dts-Add-Deschutes-board-support-based-on-Giglio-496-.patch**<br>
