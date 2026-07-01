@@ -1,0 +1,284 @@
+From 12d2c27cea0837739ccd95c5187767a35374f2ee Mon Sep 17 00:00:00 2001
+From: Brad Larson <bradley.larson@amd.com>
+Date: Wed, 24 Jun 2026 12:52:24 -0700
+Subject: [PATCH 12/20] spi: cadence-quadspi: fix indirect write timeout on AMD
+ Pensando
+
+Fix an indirect-write completion timeout observed on the Cadence QSPI
+controller on AMD Pensando Salina SoC.  Refactor the driver so the Salina
+indirect-write quirk only affects Salina, building on earlier internal
+AMD Pensando 6.8 work by Venkanna Thadishetty.
+
+Signed-off-by: Brad Larson <bradley.larson@amd.com>
+---
+ drivers/spi/spi-cadence-quadspi.c | 141 +++++++++++++++++++++++++-----
+ 1 file changed, 120 insertions(+), 21 deletions(-)
+
+diff --git a/drivers/spi/spi-cadence-quadspi.c b/drivers/spi/spi-cadence-quadspi.c
+index 72262b6fb62b..c65b5dbf92b6 100644
+--- a/drivers/spi/spi-cadence-quadspi.c
++++ b/drivers/spi/spi-cadence-quadspi.c
+@@ -44,6 +44,7 @@ static_assert(CQSPI_MAX_CHIPSELECT <= SPI_CS_CNT_MAX);
+ #define CQSPI_NEEDS_APB_AHB_HAZARD_WAR	BIT(5)
+ #define CQSPI_RD_NO_IRQ			BIT(6)
+ #define CQSPI_DISABLE_STIG_MODE		BIT(7)
++#define CQSPI_NEEDS_INDIRECT_WR_POLL_WAR	BIT(8)
+ 
+ /* Capabilities */
+ #define CQSPI_SUPPORTS_OCTAL		BIT(0)
+@@ -102,6 +103,7 @@ struct cqspi_st {
+ 	bool			wr_completion;
+ 	bool			slow_sram;
+ 	bool			apb_ahb_hazard;
++	bool			indirect_wr_poll_war;
+ 
+ 	bool			is_jh7110; /* Flag for StarFive JH7110 SoC */
+ 	bool			disable_stig_mode;
+@@ -113,7 +115,7 @@ struct cqspi_st {
+ 
+ struct cqspi_driver_platdata {
+ 	u32 hwcaps_mask;
+-	u8 quirks;
++	u32 quirks;
+ 	int (*indirect_read_dma)(struct cqspi_flash_pdata *f_pdata,
+ 				 u_char *rxbuf, loff_t from_addr, size_t n_rx);
+ 	u32 (*get_dma_status)(struct cqspi_st *cqspi);
+@@ -125,6 +127,7 @@ struct cqspi_driver_platdata {
+ #define CQSPI_TIMEOUT_MS			500
+ #define CQSPI_READ_TIMEOUT_MS			10
+ #define CQSPI_BUSYWAIT_TIMEOUT_US		500
++#define CQSPI_INDIRECT_WR_POLL_TIMEOUT_MS	5
+ 
+ /* Runtime_pm autosuspend delay */
+ #define CQSPI_AUTOSUSPEND_TIMEOUT		2000
+@@ -353,12 +356,31 @@ static u32 cqspi_get_versal_dma_status(struct cqspi_st *cqspi)
+ 	return dma_status & CQSPI_REG_VERSAL_DMA_DST_DONE_MASK;
+ }
+ 
++static irqreturn_t cqspi_irq_thread(int this_irq, void *dev)
++{
++	struct cqspi_st *cqspi = dev;
++
++	/* Clear all interrupt status bits. */
++	writel(CQSPI_IRQ_STATUS_MASK, cqspi->iobase + CQSPI_REG_IRQSTATUS);
++
++	/* Flush the IRQSTATUS clear through the APB/AHB bridge. */
++	writel(readl(cqspi->iobase + CQSPI_REG_CONFIG),
++	       cqspi->iobase + CQSPI_REG_CONFIG);
++
++	complete(&cqspi->transfer_complete);
++
++	return IRQ_HANDLED;
++}
++
+ static irqreturn_t cqspi_irq_handler(int this_irq, void *dev)
+ {
+ 	struct cqspi_st *cqspi = dev;
+ 	const struct cqspi_driver_platdata *ddata = cqspi->ddata;
+ 	unsigned int irq_status;
+ 
++	if (cqspi->indirect_wr_poll_war)
++		return IRQ_WAKE_THREAD;
++
+ 	/* Read interrupt status */
+ 	irq_status = readl(cqspi->iobase + CQSPI_REG_IRQSTATUS);
+ 
+@@ -1061,6 +1083,7 @@ static int cqspi_indirect_write_execute(struct cqspi_flash_pdata *f_pdata,
+ 	void __iomem *reg_base = cqspi->iobase;
+ 	unsigned int remaining = n_tx;
+ 	unsigned int write_bytes;
++	bool done_polled = false;
+ 	int ret;
+ 
+ 	if (!refcount_read(&cqspi->refcount))
+@@ -1069,12 +1092,19 @@ static int cqspi_indirect_write_execute(struct cqspi_flash_pdata *f_pdata,
+ 	writel(to_addr, reg_base + CQSPI_REG_INDIRECTWRSTARTADDR);
+ 	writel(remaining, reg_base + CQSPI_REG_INDIRECTWRBYTES);
+ 
++	reinit_completion(&cqspi->transfer_complete);
++
+ 	/* Clear all interrupts. */
+ 	writel(CQSPI_IRQ_STATUS_MASK, reg_base + CQSPI_REG_IRQSTATUS);
++	if (cqspi->indirect_wr_poll_war)
++		writel(readl(reg_base + CQSPI_REG_CONFIG),
++		       reg_base + CQSPI_REG_CONFIG);
+ 
+ 	writel(CQSPI_IRQ_MASK_WR, reg_base + CQSPI_REG_IRQMASK);
++	if (cqspi->indirect_wr_poll_war)
++		writel(readl(reg_base + CQSPI_REG_CONFIG),
++		       reg_base + CQSPI_REG_CONFIG);
+ 
+-	reinit_completion(&cqspi->transfer_complete);
+ 	writel(CQSPI_REG_INDIRECTWR_START_MASK,
+ 	       reg_base + CQSPI_REG_INDIRECTWR);
+ 	readl(reg_base + CQSPI_REG_INDIRECTWR); /* Flush posted write. */
+@@ -1096,17 +1126,23 @@ static int cqspi_indirect_write_execute(struct cqspi_flash_pdata *f_pdata,
+ 	if (cqspi->apb_ahb_hazard)
+ 		readl(reg_base + CQSPI_REG_INDIRECTWR);
+ 
+-	while (remaining > 0) {
++	if (cqspi->indirect_wr_poll_war) {
+ 		size_t write_words, mod_bytes;
++		unsigned long poll_timeout;
+ 
++		/*
++		 * Pensando Salina indirect-write workaround path. Push the whole
++		 * page into SRAM and poll DONE if the completion interrupt is missed.
++		 */
+ 		write_bytes = remaining;
+ 		write_words = write_bytes / 4;
+ 		mod_bytes = write_bytes % 4;
+-		/* Write 4 bytes at a time then single bytes. */
++
+ 		if (write_words) {
+ 			iowrite32_rep(cqspi->ahb_base, txbuf, write_words);
+ 			txbuf += (write_words * 4);
+ 		}
++
+ 		if (mod_bytes) {
+ 			unsigned int temp = 0xFFFFFFFF;
+ 
+@@ -1115,25 +1151,71 @@ static int cqspi_indirect_write_execute(struct cqspi_flash_pdata *f_pdata,
+ 			txbuf += mod_bytes;
+ 		}
+ 
++		poll_timeout = msecs_to_jiffies(CQSPI_INDIRECT_WR_POLL_TIMEOUT_MS);
+ 		if (!wait_for_completion_timeout(&cqspi->transfer_complete,
+-						 msecs_to_jiffies(CQSPI_TIMEOUT_MS))) {
+-			dev_err(dev, "Indirect write timeout\n");
+-			ret = -ETIMEDOUT;
+-			goto failwr;
++						 poll_timeout)) {
++			u32 wr_reg;
++
++			writel(0, reg_base + CQSPI_REG_IRQMASK);
++
++			ret = readl_poll_timeout(reg_base + CQSPI_REG_INDIRECTWR,
++						 wr_reg,
++						 wr_reg & CQSPI_REG_INDIRECTWR_DONE_MASK,
++						 10, CQSPI_TIMEOUT_MS * 1000);
++			if (ret) {
++				dev_err(dev, "Indirect write timeout\n");
++				goto failwr;
++			}
++
++			done_polled = true;
+ 		}
+ 
+-		remaining -= write_bytes;
++		remaining = 0;
++	} else {
++		while (remaining > 0) {
++			size_t write_words, mod_bytes;
++
++			write_bytes = remaining;
++			write_words = write_bytes / 4;
++			mod_bytes = write_bytes % 4;
++			/* Write 4 bytes at a time then single bytes. */
++			if (write_words) {
++				iowrite32_rep(cqspi->ahb_base, txbuf, write_words);
++				txbuf += (write_words * 4);
++			}
++			if (mod_bytes) {
++				unsigned int temp = 0xFFFFFFFF;
+ 
+-		if (remaining > 0)
+-			reinit_completion(&cqspi->transfer_complete);
++				memcpy(&temp, txbuf, mod_bytes);
++				iowrite32(temp, cqspi->ahb_base);
++				txbuf += mod_bytes;
++			}
++
++			if (!wait_for_completion_timeout(&cqspi->transfer_complete,
++							 msecs_to_jiffies(CQSPI_TIMEOUT_MS))) {
++				dev_err(dev, "Indirect write timeout\n");
++				ret = -ETIMEDOUT;
++				goto failwr;
++			}
++
++			remaining -= write_bytes;
++
++			if (remaining > 0)
++				reinit_completion(&cqspi->transfer_complete);
++		}
+ 	}
+ 
+-	/* Check indirect done status */
+-	ret = cqspi_wait_for_bit(cqspi->ddata, reg_base + CQSPI_REG_INDIRECTWR,
+-				 CQSPI_REG_INDIRECTWR_DONE_MASK, 0, false);
+-	if (ret) {
+-		dev_err(dev, "Indirect write completion error (%i)\n", ret);
+-		goto failwr;
++	if (!done_polled) {
++		/* Check indirect done status */
++		ret = cqspi_wait_for_bit(cqspi->ddata,
++					 reg_base + CQSPI_REG_INDIRECTWR,
++					 CQSPI_REG_INDIRECTWR_DONE_MASK, 0,
++					 false);
++		if (ret) {
++			dev_err(dev, "Indirect write completion error (%i)\n",
++				ret);
++			goto failwr;
++		}
+ 	}
+ 
+ 	/* Disable interrupt. */
+@@ -1925,6 +2007,8 @@ static int cqspi_probe(struct platform_device *pdev)
+ 			cqspi->slow_sram = true;
+ 		if (ddata->quirks & CQSPI_NEEDS_APB_AHB_HAZARD_WAR)
+ 			cqspi->apb_ahb_hazard = true;
++		if (ddata->quirks & CQSPI_NEEDS_INDIRECT_WR_POLL_WAR)
++			cqspi->indirect_wr_poll_war = true;
+ 
+ 		if (ddata->jh7110_clk_init) {
+ 			ret = cqspi_jh7110_clk_init(pdev, cqspi);
+@@ -1945,8 +2029,13 @@ static int cqspi_probe(struct platform_device *pdev)
+ 	refcount_set(&cqspi->refcount, 1);
+ 	refcount_set(&cqspi->inflight_ops, 1);
+ 
+-	ret = devm_request_irq(dev, irq, cqspi_irq_handler, 0,
+-			       pdev->name, cqspi);
++	if (cqspi->indirect_wr_poll_war)
++		ret = devm_request_threaded_irq(dev, irq, cqspi_irq_handler,
++						cqspi_irq_thread, IRQF_ONESHOT,
++						pdev->name, cqspi);
++	else
++		ret = devm_request_irq(dev, irq, cqspi_irq_handler, 0,
++				       pdev->name, cqspi);
+ 	if (ret) {
+ 		dev_err(dev, "Cannot request IRQ.\n");
+ 		goto probe_reset_failed;
+@@ -2119,10 +2208,16 @@ static const struct cqspi_driver_platdata jh7110_qspi = {
+ 	.jh7110_clk_init = cqspi_jh7110_clk_init,
+ };
+ 
+-static const struct cqspi_driver_platdata pensando_cdns_qspi = {
++static const struct cqspi_driver_platdata pensando_elba_qspi = {
+ 	.quirks = CQSPI_NEEDS_APB_AHB_HAZARD_WAR | CQSPI_DISABLE_DAC_MODE,
+ };
+ 
++static const struct cqspi_driver_platdata pensando_salina_qspi = {
++	.quirks = CQSPI_NEEDS_APB_AHB_HAZARD_WAR |
++		  CQSPI_NEEDS_INDIRECT_WR_POLL_WAR |
++		  CQSPI_DISABLE_DAC_MODE,
++};
++
+ static const struct cqspi_driver_platdata mobileye_eyeq5_ospi = {
+ 	.hwcaps_mask = CQSPI_SUPPORTS_OCTAL,
+ 	.quirks = CQSPI_DISABLE_DAC_MODE | CQSPI_NO_SUPPORT_WR_COMPLETION |
+@@ -2160,7 +2255,11 @@ static const struct of_device_id cqspi_dt_ids[] = {
+ 	},
+ 	{
+ 		.compatible = "amd,pensando-elba-qspi",
+-		.data = &pensando_cdns_qspi,
++		.data = &pensando_elba_qspi,
++	},
++	{
++		.compatible = "amd,pensando-salina-qspi",
++		.data = &pensando_salina_qspi,
+ 	},
+ 	{
+ 		.compatible = "mobileye,eyeq5-ospi",
+-- 
+2.25.1
+

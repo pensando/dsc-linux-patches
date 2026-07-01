@@ -1,0 +1,233 @@
+From f5bef3f249337beadb492a7a63b227c68f4365a6 Mon Sep 17 00:00:00 2001
+From: Brad Larson <bradley.larson@amd.com>
+Date: Wed, 24 Jun 2026 12:47:35 -0700
+Subject: [PATCH 07/20] reset: add AMD Pensando ELBASR reset controller
+
+Add the ELBASR reset controller used for eMMC and peripheral reset on
+AMD Pensando Salina boards.
+
+Signed-off-by: Brad Larson <bradley.larson@amd.com>
+---
+ drivers/reset/Kconfig        |   9 ++
+ drivers/reset/Makefile       |   1 +
+ drivers/reset/reset-elbasr.c | 176 +++++++++++++++++++++++++++++++++++
+ 3 files changed, 186 insertions(+)
+ create mode 100644 drivers/reset/reset-elbasr.c
+
+diff --git a/drivers/reset/Kconfig b/drivers/reset/Kconfig
+index 1cf577e3223b..ab0d7aef91a7 100644
+--- a/drivers/reset/Kconfig
++++ b/drivers/reset/Kconfig
+@@ -66,6 +66,15 @@ config RESET_BRCMSTB_RESCAL
+ 	  This enables the RESCAL reset controller for SATA, PCIe0, or PCIe1 on
+ 	  BCM7216 or the BCM2712.
+ 
++config RESET_ELBASR
++	tristate "Pensando Elba System Resource reset controller"
++	depends on MFD_PENSANDO_ELBASR || COMPILE_TEST
++	help
++	  This option enables support for the external reset functions
++	  on the Pensando Elba System Resource Chip.  Reset control
++	  of peripherals is accessed over SPI to the system resource
++	  chip device registers using CS0.
++
+ config RESET_EYEQ
+ 	bool "Mobileye EyeQ reset controller"
+ 	depends on MACH_EYEQ5 || MACH_EYEQ6H || COMPILE_TEST
+diff --git a/drivers/reset/Makefile b/drivers/reset/Makefile
+index 4411a2a124d7..c2a0d750f26b 100644
+--- a/drivers/reset/Makefile
++++ b/drivers/reset/Makefile
+@@ -11,6 +11,7 @@ obj-$(CONFIG_RESET_BCM6345) += reset-bcm6345.o
+ obj-$(CONFIG_RESET_BERLIN) += reset-berlin.o
+ obj-$(CONFIG_RESET_BRCMSTB) += reset-brcmstb.o
+ obj-$(CONFIG_RESET_BRCMSTB_RESCAL) += reset-brcmstb-rescal.o
++obj-$(CONFIG_RESET_ELBASR) += reset-elbasr.o
+ obj-$(CONFIG_RESET_EYEQ) += reset-eyeq.o
+ obj-$(CONFIG_RESET_GPIO) += reset-gpio.o
+ obj-$(CONFIG_RESET_HSDK) += reset-hsdk.o
+diff --git a/drivers/reset/reset-elbasr.c b/drivers/reset/reset-elbasr.c
+new file mode 100644
+index 000000000000..c657c7a8dab0
+--- /dev/null
++++ b/drivers/reset/reset-elbasr.c
+@@ -0,0 +1,176 @@
++// SPDX-License-Identifier: (GPL-2.0+ OR MIT)
++/*
++ * Copyright (c) 2022 Advanced Micro Devices, Inc.
++ *
++ * Common elbasr reset controller for both Elba and Salina.
++ *
++ * On Salina (with CPLD mux) the optional property "spi-reset-frequency"
++ * (placed on the reset-controller node) is read. If present and non-zero,
++ * the parent SPI bus is temporarily forced to that frequency only for
++ * the duration of assert() and deassert(). The original speed is restored
++ * immediately after the register write.
++ *
++ * On Elba (no mux, direct physical chip selects) the property is absent
++ * or zero, so the driver behaves exactly as before (no speed change).
++ */
++
++#include <linux/mfd/pensando-elbasr.h>
++#include <linux/platform_device.h>
++#include <linux/reset-controller.h>
++#include <linux/regmap.h>
++#include <linux/err.h>
++#include <linux/of.h>
++#include <linux/spi/spi.h>
++
++#include <dt-bindings/reset/amd,pensando-elba-reset.h>
++
++struct elbasr_reset {
++	struct reset_controller_dev rcdev;
++	struct spi_device *spi;		/* cached parent SPI device */
++	struct regmap *regmap;
++	unsigned int reset_speed_hz;	/* 0 = no override (Elba) */
++};
++
++static inline struct elbasr_reset *to_elbasr_rst(struct reset_controller_dev *rc)
++{
++	return container_of(rc, struct elbasr_reset, rcdev);
++}
++
++static inline int elbasr_reset_shift(unsigned long id)
++{
++	switch (id) {
++	case EMMC_HW_RESET:
++		return 6;
++	default:
++		return -EINVAL;
++	}
++}
++
++static int elbasr_reset(struct reset_controller_dev *rcdev,
++			unsigned long id, bool enable)
++{
++	struct elbasr_reset *elbar = to_elbasr_rst(rcdev);
++	struct spi_device *spi = elbar->spi;
++	unsigned int orig_speed = 0;
++	int val, ret;
++	u32 mask;
++
++	dev_dbg(&spi->dev, "emmc_reset: %s\n", enable ? "assert" : "deassert");
++
++	val = elbasr_reset_shift(id);
++	if (val < 0)
++		return val;
++	mask = 1 << val;
++
++	/* Temporary spi frequency reduction for emmc reset is needed */
++	if (spi && elbar->reset_speed_hz) {
++		orig_speed = spi->max_speed_hz;
++
++		dev_dbg(&spi->dev,
++			"emmc reset, temporarily setting SPI to %u Hz (was %u Hz)\n",
++			elbar->reset_speed_hz, orig_speed);
++
++		spi->max_speed_hz = elbar->reset_speed_hz;
++	}
++
++	ret = regmap_update_bits(elbar->regmap,
++				 ELBASR_CTRL0_REG,
++				 mask,
++				 enable ? mask : 0);
++
++	/* Restore original speed */
++	if (spi && orig_speed) {
++		spi->max_speed_hz = orig_speed;
++		dev_dbg(&spi->dev, "restored SPI speed to %u Hz after reset %s\n",
++			orig_speed, enable ? "assert" : "deassert");
++	}
++
++	return ret;
++}
++
++static int elbasr_reset_assert(struct reset_controller_dev *rcdev,
++			       unsigned long id)
++{
++	return elbasr_reset(rcdev, id, true);
++}
++
++static int elbasr_reset_deassert(struct reset_controller_dev *rcdev,
++				 unsigned long id)
++{
++	return elbasr_reset(rcdev, id, false);
++}
++
++static const struct reset_control_ops elbasr_reset_ops = {
++	.assert = elbasr_reset_assert,
++	.deassert = elbasr_reset_deassert,
++};
++
++static int elbasr_reset_probe(struct platform_device *pdev)
++{
++	struct elbasr_data *elbasr;
++	struct elbasr_reset *elbar;
++	struct spi_device *spi_parent;
++	int ret;
++
++	if (!pdev->dev.parent) {
++		dev_err(&pdev->dev, "no parent device\n");
++		return -ENODEV;
++	}
++
++	elbasr = dev_get_drvdata(pdev->dev.parent);
++	if (!elbasr) {
++		dev_err(&pdev->dev, "no elbasr_data from parent MFD\n");
++		return -ENODEV;
++	}
++
++	spi_parent = to_spi_device(pdev->dev.parent);
++	if (spi_parent) {
++		pr_info("pensando_elbasr_reset: parent SPI device %s, current max_speed_hz = %u Hz\n",
++			 dev_name(&spi_parent->dev), spi_parent->max_speed_hz);
++	} else {
++		dev_warn(&pdev->dev, "could not locate parent SPI device\n");
++	}
++
++	elbar = devm_kzalloc(&pdev->dev, sizeof(struct elbasr_reset), GFP_KERNEL);
++	if (!elbar)
++		return -ENOMEM;
++
++	elbar->spi = spi_parent;
++
++	/* Read optional spi-reset-frequency (Salina only, default 0 = Elba behavior) */
++	elbar->reset_speed_hz = 0;
++	of_property_read_u32(pdev->dev.of_node, "spi-reset-frequency", &elbar->reset_speed_hz);
++	if (elbar->reset_speed_hz)
++		pr_info("pensando_elbasr_reset: emmc spi-reset-frequency = %u Hz\n",
++			 elbar->reset_speed_hz);
++
++	elbar->rcdev.owner = THIS_MODULE;
++	elbar->rcdev.nr_resets = ELBASR_NR_RESETS;
++	elbar->rcdev.ops = &elbasr_reset_ops;
++	elbar->rcdev.of_node = pdev->dev.of_node;
++	elbar->regmap = elbasr->elbasr_regs;
++
++	platform_set_drvdata(pdev, elbar);
++
++	ret = devm_reset_controller_register(&pdev->dev, &elbar->rcdev);
++	if (ret)
++		dev_err(&pdev->dev, "failed to register reset controller (ret=%d)\n", ret);
++	else
++		dev_dbg(&pdev->dev, "reset controller registered\n");
++
++	return ret;
++}
++
++static const struct of_device_id elba_reset_dt_match[] = {
++	{ .compatible = "amd,pensando-elbasr-reset", },
++	{ /* sentinel */ },
++};
++
++static struct platform_driver elbasr_reset_driver = {
++	.probe = elbasr_reset_probe,
++	.driver = {
++		.name = "pensando_elbasr_reset",
++		.of_match_table = elba_reset_dt_match,
++	},
++};
++builtin_platform_driver(elbasr_reset_driver);
+-- 
+2.25.1
+
