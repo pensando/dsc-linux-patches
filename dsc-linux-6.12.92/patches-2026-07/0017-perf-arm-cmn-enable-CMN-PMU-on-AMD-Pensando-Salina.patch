@@ -1,0 +1,37 @@
+From ecdc1430e50ea1c7c0949b59a45b043fb073dae2 Mon Sep 17 00:00:00 2001
+From: Brad Larson <bradley.larson@amd.com>
+Date: Wed, 24 Jun 2026 12:57:55 -0700
+Subject: [PATCH 17/20] perf: arm-cmn: enable CMN PMU on AMD Pensando Salina
+
+Enable the Arm CMN-700 PMU on the AMD Pensando Salina SoC.
+
+Based on internal AMD Pensando 6.8 work by Darshan Prajapati.
+
+Signed-off-by: Brad Larson <bradley.larson@amd.com>
+---
+ drivers/perf/arm-cmn.c | 6 ++++++
+ 1 file changed, 6 insertions(+)
+
+diff --git a/drivers/perf/arm-cmn.c b/drivers/perf/arm-cmn.c
+index 9a20008ad4a1..730eb501ee8d 100644
+--- a/drivers/perf/arm-cmn.c
++++ b/drivers/perf/arm-cmn.c
+@@ -2099,9 +2099,15 @@ static int arm_cmn_init_irqs(struct arm_cmn *cmn)
+ 				goto next;
+ 			}
+ 		}
++#ifdef CONFIG_ARCH_PENSANDO_SALINA_SOC
++		err = devm_request_irq(cmn->dev, irq, arm_cmn_handle_irq,
++				       IRQF_NOBALANCING | IRQF_NO_THREAD | IRQF_SHARED,
++				       dev_name(cmn->dev), &cmn->dtc[i]);
++#else
+ 		err = devm_request_irq(cmn->dev, irq, arm_cmn_handle_irq,
+ 				       IRQF_NOBALANCING | IRQF_NO_THREAD,
+ 				       dev_name(cmn->dev), &cmn->dtc[i]);
++#endif
+ 		if (err)
+ 			return err;
+ 
+-- 
+2.25.1
+

@@ -1,0 +1,203 @@
+From 00ea6dc5595274be20d43a1fd22148c040d226e8 Mon Sep 17 00:00:00 2001
+From: Brad Larson <bradley.larson@amd.com>
+Date: Wed, 24 Jun 2026 12:56:01 -0700
+Subject: [PATCH 15/20] hwmon: pmbus: add LTC3888 and TPS53659 support
+
+Add device support for the LTC3888 (ltc2978 driver) and TPS53659
+(tps53679 driver) regulators used on AMD Pensando boards.
+
+The LTC3888 support is based on internal AMD Pensando 5.10 work by
+Rahul Shekhar.
+
+Signed-off-by: Brad Larson <bradley.larson@amd.com>
+---
+ drivers/hwmon/pmbus/ltc2978.c  | 44 +++++++++++++++++++++++++++++++++-
+ drivers/hwmon/pmbus/tps53679.c | 18 +++++++++++++-
+ 2 files changed, 60 insertions(+), 2 deletions(-)
+
+diff --git a/drivers/hwmon/pmbus/ltc2978.c b/drivers/hwmon/pmbus/ltc2978.c
+index 73a86f4d6472..ed89e0a7e1a8 100644
+--- a/drivers/hwmon/pmbus/ltc2978.c
++++ b/drivers/hwmon/pmbus/ltc2978.c
+@@ -23,7 +23,8 @@ enum chips {
+ 	/* Managers */
+ 	ltc2972, ltc2974, ltc2975, ltc2977, ltc2978, ltc2979, ltc2980,
+ 	/* Controllers */
+-	ltc3880, ltc3882, ltc3883, ltc3884, ltc3886, ltc3887, ltc3889, ltc7132, ltc7880,
++	ltc3880, ltc3882, ltc3883, ltc3884, ltc3886, ltc3887, ltc3888, ltc3889,
++	ltc7132, ltc7880,
+ 	/* Modules */
+ 	ltm2987, ltm4664, ltm4675, ltm4676, ltm4677, ltm4678, ltm4680, ltm4686,
+ 	ltm4700,
+@@ -53,6 +54,9 @@ enum chips {
+ /* LTC3883, LTC3884, LTC3886, LTC3889, LTC7132, LTC7880 */
+ #define LTC3883_MFR_IIN_PEAK		0xe1
+ 
++/* LTC3888 only */
++#define LTC3888_MFR_TOTAL_IOUT		0xe1
++
+ /* LTC2975 only */
+ #define LTC2975_MFR_IIN_PEAK		0xc4
+ #define LTC2975_MFR_IIN_MIN		0xc5
+@@ -78,6 +82,8 @@ enum chips {
+ #define LTC3884_ID			0x4C00
+ #define LTC3886_ID			0x4600
+ #define LTC3887_ID			0x4700
++#define LTC3888_ID			0x4800
++#define LTC3888_ID_D1			0x4880	/* Dash 1 */
+ #define LTC3889_ID			0x4900
+ #define LTC7132_ID			0x4CE0
+ #define LTC7880_ID			0x49E0
+@@ -467,6 +473,26 @@ static int ltc3883_read_word_data(struct i2c_client *client, int page,
+ 	return ret;
+ }
+ 
++static int ltc3888_read_word_data(struct i2c_client *client, int page,
++				  int phase, int reg)
++{
++	const struct pmbus_driver_info *info = pmbus_get_driver_info(client);
++	struct ltc2978_data *data = to_ltc2978_data(info);
++	int ret;
++
++	switch (reg) {
++	case PMBUS_VIRT_READ_IOUT_AVG:
++		ret = ltc_read_word_data(client, page, 0xff,
++					 LTC3888_MFR_TOTAL_IOUT);
++		data->iout_max[page] = lin11_to_val(ret);
++		break;
++	default:
++		ret = ltc3880_read_word_data(client, page, phase, reg);
++		break;
++	}
++	return ret;
++}
++
+ static int ltc2978_clear_peaks(struct ltc2978_data *data,
+ 			       struct i2c_client *client, int page)
+ {
+@@ -546,6 +572,7 @@ static const struct i2c_device_id ltc2978_id[] = {
+ 	{"ltc3884", ltc3884},
+ 	{"ltc3886", ltc3886},
+ 	{"ltc3887", ltc3887},
++	{"ltc3888", ltc3888},
+ 	{"ltc3889", ltc3889},
+ 	{"ltc7132", ltc7132},
+ 	{"ltc7880", ltc7880},
+@@ -650,6 +677,8 @@ static int ltc2978_get_id(struct i2c_client *client)
+ 		return ltc3886;
+ 	else if (chip_id == LTC3887_ID)
+ 		return ltc3887;
++	else if (chip_id == LTC3888_ID || chip_id == LTC3888_ID_D1)
++		return ltc3888;
+ 	else if (chip_id == LTC3889_ID)
+ 		return ltc3889;
+ 	else if (chip_id == LTC7132_ID)
+@@ -854,6 +883,18 @@ static int ltc2978_probe(struct i2c_client *client)
+ 		  | PMBUS_HAVE_POUT
+ 		  | PMBUS_HAVE_TEMP | PMBUS_HAVE_STATUS_TEMP;
+ 		break;
++	case ltc3888:
++		data->features |= FEAT_CLEAR_PEAKS | FEAT_NEEDS_POLLING;
++		info->read_word_data = ltc3888_read_word_data;
++		info->pages = LTC3880_NUM_PAGES;
++		info->func[0] = PMBUS_HAVE_STATUS_VOUT | PMBUS_HAVE_STATUS_IOUT
++		  | PMBUS_HAVE_STATUS_INPUT | PMBUS_HAVE_STATUS_TEMP
++		  | PMBUS_HAVE_VIN | PMBUS_HAVE_VOUT | PMBUS_HAVE_IOUT
++		  | PMBUS_HAVE_TEMP | PMBUS_HAVE_TEMP2;
++		info->func[1] = PMBUS_HAVE_STATUS_VOUT | PMBUS_HAVE_STATUS_IOUT
++		  | PMBUS_HAVE_STATUS_TEMP | PMBUS_HAVE_VOUT | PMBUS_HAVE_IOUT
++		  | PMBUS_HAVE_TEMP;
++		break;
+ 	default:
+ 		return -ENODEV;
+ 	}
+@@ -905,6 +946,7 @@ static const struct of_device_id ltc2978_of_match[] = {
+ 	{ .compatible = "lltc,ltc3884" },
+ 	{ .compatible = "lltc,ltc3886" },
+ 	{ .compatible = "lltc,ltc3887" },
++	{ .compatible = "lltc,ltc3888" },
+ 	{ .compatible = "lltc,ltc3889" },
+ 	{ .compatible = "lltc,ltc7132" },
+ 	{ .compatible = "lltc,ltc7880" },
+diff --git a/drivers/hwmon/pmbus/tps53679.c b/drivers/hwmon/pmbus/tps53679.c
+index ecc1be33b3b1..a3e048b5a7e6 100644
+--- a/drivers/hwmon/pmbus/tps53679.c
++++ b/drivers/hwmon/pmbus/tps53679.c
+@@ -16,7 +16,7 @@
+ #include "pmbus.h"
+ 
+ enum chips {
+-	tps53647, tps53667, tps53676, tps53679, tps53681, tps53688
++	tps53647, tps53659, tps53667, tps53676, tps53679, tps53681, tps53688, tps53689
+ };
+ 
+ #define TPS53647_PAGE_NUM		1
+@@ -29,6 +29,7 @@ enum chips {
+ #define TPS53679_PROT_VR13_10MV		0x04 /* VR13.0 mode, 10-mV DAC */
+ #define TPS53679_PROT_IMVP8_5MV		0x05 /* IMVP8 mode, 5-mV DAC */
+ #define TPS53679_PROT_VR13_5MV		0x07 /* VR13.0 mode, 5-mV DAC */
++#define TPS53679_PROT_VR14_10MV		0x16 /* VR14.0 mode, 10-mv DAC */
+ #define TPS53679_PAGE_NUM		2
+ 
+ #define TPS53681_DEVICE_ID		0x81
+@@ -56,6 +57,7 @@ static int tps53679_identify_mode(struct i2c_client *client,
+ 		switch (vout_params) {
+ 		case TPS53679_PROT_VR13_10MV:
+ 		case TPS53679_PROT_VR12_5_10MV:
++		case TPS53679_PROT_VR14_10MV:
+ 			info->vrm_version[i] = vr13;
+ 			break;
+ 		case TPS53679_PROT_VR13_5MV:
+@@ -252,11 +254,21 @@ static int tps53679_probe(struct i2c_client *client)
+ 	case tps53676:
+ 		info->identify = tps53676_identify;
+ 		break;
++	case tps53659:
++		info->pages = TPS53679_PAGE_NUM;
++		info->identify = tps53679_identify;
++		info->func[0] |= PMBUS_HAVE_PIN;
++		break;
+ 	case tps53679:
+ 	case tps53688:
+ 		info->pages = TPS53679_PAGE_NUM;
+ 		info->identify = tps53679_identify;
+ 		break;
++	case tps53689:
++		info->pages = TPS53679_PAGE_NUM;
++		info->identify = tps53679_identify;
++		info->format[PSC_VOLTAGE_OUT] = linear;
++		break;
+ 	case tps53681:
+ 		info->pages = TPS53679_PAGE_NUM;
+ 		info->phases[0] = 6;
+@@ -273,11 +285,13 @@ static int tps53679_probe(struct i2c_client *client)
+ static const struct i2c_device_id tps53679_id[] = {
+ 	{"bmr474", tps53676},
+ 	{"tps53647", tps53647},
++	{"tps53659", tps53659},
+ 	{"tps53667", tps53667},
+ 	{"tps53676", tps53676},
+ 	{"tps53679", tps53679},
+ 	{"tps53681", tps53681},
+ 	{"tps53688", tps53688},
++	{"tps53689", tps53689},
+ 	{}
+ };
+ 
+@@ -285,11 +299,13 @@ MODULE_DEVICE_TABLE(i2c, tps53679_id);
+ 
+ static const struct of_device_id __maybe_unused tps53679_of_match[] = {
+ 	{.compatible = "ti,tps53647", .data = (void *)tps53647},
++	{.compatible = "ti,tps53659", .data = (void *)tps53659},
+ 	{.compatible = "ti,tps53667", .data = (void *)tps53667},
+ 	{.compatible = "ti,tps53676", .data = (void *)tps53676},
+ 	{.compatible = "ti,tps53679", .data = (void *)tps53679},
+ 	{.compatible = "ti,tps53681", .data = (void *)tps53681},
+ 	{.compatible = "ti,tps53688", .data = (void *)tps53688},
++	{.compatible = "ti,tps53689", .data = (void *)tps53689},
+ 	{}
+ };
+ MODULE_DEVICE_TABLE(of, tps53679_of_match);
+-- 
+2.25.1
+
