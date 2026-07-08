@@ -1,0 +1,1065 @@
+From 45ebf06c4adb2c3d4297f88b47ea2e2d84fd587d Mon Sep 17 00:00:00 2001
+From: Hiren Mehta <hiren.mehta@amd.com>
+Date: Tue, 7 Jul 2026 17:16:48 -0700
+Subject: arm64/dts/amd Add missing elba/giglio DTS files
+
+Add PSCI, flash128, and secure DTS variants for Elba and Giglio SoCs.
+Also refactors elba-16core.dtsi into separate PSCI and spin-table
+includes, and adds flash128 partition layout support.
+
+Signed-off-by: Hiren Mehta <hiren.mehta@amd.com>
+---
+ arch/arm64/boot/dts/amd/Makefile              |  12 +-
+ arch/arm64/boot/dts/amd/elba-16core-psci.dtsi |  60 ++++++++++
+ .../boot/dts/amd/elba-16core-spin-table.dtsi  |  53 ++++++++
+ arch/arm64/boot/dts/amd/elba-16core.dtsi      |  82 +++++--------
+ arch/arm64/boot/dts/amd/elba-asic-common.dtsi |   9 ++
+ .../arm64/boot/dts/amd/elba-asic-flash128.dts |  29 +++++
+ .../boot/dts/amd/elba-asic-psci-flash128.dts  |  29 +++++
+ arch/arm64/boot/dts/amd/elba-asic-psci.dts    |  29 +++++
+ arch/arm64/boot/dts/amd/elba-asic.dts         |   3 +-
+ arch/arm64/boot/dts/amd/elba-flash-parts.dtsi |   9 +-
+ .../boot/dts/amd/elba-flash128-parts.dtsi     | 113 ++++++++++++++++++
+ arch/arm64/boot/dts/amd/elba-secure.dts       |  37 ++++++
+ arch/arm64/boot/dts/amd/elba.dtsi             |  28 +++++
+ .../boot/dts/amd/giglio-asic-common.dtsi      |   5 +-
+ .../boot/dts/amd/giglio-asic-flash128.dts     |  29 +++++
+ .../dts/amd/giglio-asic-psci-flash128.dts     |  29 +++++
+ arch/arm64/boot/dts/amd/giglio-asic-psci.dts  |  29 +++++
+ arch/arm64/boot/dts/amd/giglio-asic.dts       |   3 +-
+ arch/arm64/boot/dts/amd/giglio-secure.dts     |  37 ++++++
+ arch/arm64/boot/dts/amd/giglio.dtsi           |  35 ++++--
+ arch/arm64/configs/elba_defconfig             |   2 +-
+ arch/arm64/configs/giglio_defconfig           |   2 +-
+ 22 files changed, 598 insertions(+), 66 deletions(-)
+ create mode 100644 arch/arm64/boot/dts/amd/elba-16core-psci.dtsi
+ create mode 100644 arch/arm64/boot/dts/amd/elba-16core-spin-table.dtsi
+ create mode 100644 arch/arm64/boot/dts/amd/elba-asic-flash128.dts
+ create mode 100644 arch/arm64/boot/dts/amd/elba-asic-psci-flash128.dts
+ create mode 100644 arch/arm64/boot/dts/amd/elba-asic-psci.dts
+ create mode 100644 arch/arm64/boot/dts/amd/elba-flash128-parts.dtsi
+ create mode 100644 arch/arm64/boot/dts/amd/elba-secure.dts
+ create mode 100644 arch/arm64/boot/dts/amd/giglio-asic-flash128.dts
+ create mode 100644 arch/arm64/boot/dts/amd/giglio-asic-psci-flash128.dts
+ create mode 100644 arch/arm64/boot/dts/amd/giglio-asic-psci.dts
+ create mode 100644 arch/arm64/boot/dts/amd/giglio-secure.dts
+
+diff --git a/arch/arm64/boot/dts/amd/Makefile b/arch/arm64/boot/dts/amd/Makefile
+index 10f20f231618..001d6ce70878 100644
+--- a/arch/arm64/boot/dts/amd/Makefile
++++ b/arch/arm64/boot/dts/amd/Makefile
+@@ -1,6 +1,14 @@
+ # SPDX-License-Identifier: GPL-2.0
+-dtb-$(CONFIG_ARCH_PENSANDO) += elba-asic.dtb
+-dtb-$(CONFIG_ARCH_PENSANDO_GIGLIO_SOC) += giglio-asic.dtb giglio-deschutes-flash128.dtb
++dtb-$(CONFIG_ARCH_PENSANDO) += elba-asic.dtb \
++			       elba-asic-psci.dtb \
++			       elba-secure.dtb \
++			       elba-asic-psci-flash128.dtb \
++			       elba-asic-flash128.dtb
++dtb-$(CONFIG_ARCH_PENSANDO_GIGLIO_SOC) += giglio-asic.dtb \
++					  giglio-asic-psci.dtb \
++					  giglio-asic-psci-flash128.dtb \
++					  giglio-asic-flash128.dtb \
++					  giglio-secure.dtb giglio-deschutes-flash128.dtb
+ dtb-$(CONFIG_ARCH_PENSANDO_SALINA_SOC) += salina-asic.dtb \
+ 					  salina-a35-asic.dtb \
+ 					  salina-haps-4core.dtb \
+diff --git a/arch/arm64/boot/dts/amd/elba-16core-psci.dtsi b/arch/arm64/boot/dts/amd/elba-16core-psci.dtsi
+new file mode 100644
+index 000000000000..98c7d4187d30
+--- /dev/null
++++ b/arch/arm64/boot/dts/amd/elba-16core-psci.dtsi
+@@ -0,0 +1,60 @@
++// SPDX-License-Identifier: (GPL-2.0-only or BSD-2-Clause)
++/*
++ * Copyright 2020-2022 Advanced Micro Devices, Inc.
++ */
++
++&cpu0 {
++	enable-method = "psci";
++};
++&cpu1 {
++	enable-method = "psci";
++};
++&cpu2 {
++	enable-method = "psci";
++};
++&cpu3 {
++	enable-method = "psci";
++};
++&cpu4 {
++	enable-method = "psci";
++};
++&cpu5 {
++	enable-method = "psci";
++};
++&cpu6 {
++	enable-method = "psci";
++};
++&cpu7 {
++	enable-method = "psci";
++};
++&cpu8 {
++	enable-method = "psci";
++};
++&cpu9 {
++	enable-method = "psci";
++};
++&cpu10 {
++	enable-method = "psci";
++};
++&cpu11 {
++	enable-method = "psci";
++};
++&cpu12 {
++	enable-method = "psci";
++};
++&cpu13 {
++	enable-method = "psci";
++};
++&cpu14 {
++	enable-method = "psci";
++};
++&cpu15 {
++	enable-method = "psci";
++};
++
++/ {
++	psci {
++		compatible = "arm,psci-0.2";
++		method = "smc";
++	};
++};
+diff --git a/arch/arm64/boot/dts/amd/elba-16core-spin-table.dtsi b/arch/arm64/boot/dts/amd/elba-16core-spin-table.dtsi
+new file mode 100644
+index 000000000000..4872a8db54bb
+--- /dev/null
++++ b/arch/arm64/boot/dts/amd/elba-16core-spin-table.dtsi
+@@ -0,0 +1,53 @@
++// SPDX-License-Identifier: (GPL-2.0-only or BSD-2-Clause)
++/*
++ * Copyright 2020-2022 Advanced Micro Devices, Inc.
++ */
++
++&cpu0 {
++	enable-method = "spin-table";
++};
++&cpu1 {
++	enable-method = "spin-table";
++};
++&cpu2 {
++	enable-method = "spin-table";
++};
++&cpu3 {
++	enable-method = "spin-table";
++};
++&cpu4 {
++	enable-method = "spin-table";
++};
++&cpu5 {
++	enable-method = "spin-table";
++};
++&cpu6 {
++	enable-method = "spin-table";
++};
++&cpu7 {
++	enable-method = "spin-table";
++};
++&cpu8 {
++	enable-method = "spin-table";
++};
++&cpu9 {
++	enable-method = "spin-table";
++};
++&cpu10 {
++	enable-method = "spin-table";
++};
++&cpu11 {
++	enable-method = "spin-table";
++};
++&cpu12 {
++	enable-method = "spin-table";
++};
++&cpu13 {
++	enable-method = "spin-table";
++};
++&cpu14 {
++	enable-method = "spin-table";
++};
++&cpu15 {
++	enable-method = "spin-table";
++};
+diff --git a/arch/arm64/boot/dts/amd/elba-16core.dtsi b/arch/arm64/boot/dts/amd/elba-16core.dtsi
+index 568bcc39ce9f..29c9db89a67f 100644
+--- a/arch/arm64/boot/dts/amd/elba-16core.dtsi
++++ b/arch/arm64/boot/dts/amd/elba-16core.dtsi
+@@ -5,7 +5,7 @@
+ 
+ / {
+ 	cpus {
+-		#address-cells = <1>;
++		#address-cells = <2>;
+ 		#size-cells = <0>;
+ 
+ 		cpu-map {
+@@ -41,34 +41,30 @@ cluster3 {
+ 		/* CLUSTER 0 */
+ 		cpu0: cpu@0 {
+ 			device_type = "cpu";
+-			compatible = "arm,cortex-a72";
+-			reg = <0x0>;
++			compatible = "arm,cortex-a72", "arm,armv8";
++			reg = <0 0x0>;
+ 			next-level-cache = <&l2_0>;
+-			enable-method = "psci";
+ 		};
+ 
+ 		cpu1: cpu@1 {
+ 			device_type = "cpu";
+-			compatible = "arm,cortex-a72";
+-			reg = <0x1>;
++			compatible = "arm,cortex-a72", "arm,armv8";
++			reg = <0 0x1>;
+ 			next-level-cache = <&l2_0>;
+-			enable-method = "psci";
+ 		};
+ 
+ 		cpu2: cpu@2 {
+ 			device_type = "cpu";
+-			compatible = "arm,cortex-a72";
+-			reg = <0x2>;
++			compatible = "arm,cortex-a72", "arm,armv8";
++			reg = <0 0x2>;
+ 			next-level-cache = <&l2_0>;
+-			enable-method = "psci";
+ 		};
+ 
+ 		cpu3: cpu@3 {
+ 			device_type = "cpu";
+-			compatible = "arm,cortex-a72";
+-			reg = <0x3>;
++			compatible = "arm,cortex-a72", "arm,armv8";
++			reg = <0 0x3>;
+ 			next-level-cache = <&l2_0>;
+-			enable-method = "psci";
+ 		};
+ 
+ 		l2_0: l2-cache0 {
+@@ -80,34 +76,30 @@ l2_0: l2-cache0 {
+ 		/* CLUSTER 1 */
+ 		cpu4: cpu@100 {
+ 			device_type = "cpu";
+-			compatible = "arm,cortex-a72";
+-			reg = <0x100>;
++			compatible = "arm,cortex-a72", "arm,armv8";
++			reg = <0 0x100>;
+ 			next-level-cache = <&l2_1>;
+-			enable-method = "psci";
+ 		};
+ 
+ 		cpu5: cpu@101 {
+ 			device_type = "cpu";
+-			compatible = "arm,cortex-a72";
+-			reg = <0x101>;
++			compatible = "arm,cortex-a72", "arm,armv8";
++			reg = <0 0x101>;
+ 			next-level-cache = <&l2_1>;
+-			enable-method = "psci";
+ 		};
+ 
+ 		cpu6: cpu@102 {
+ 			device_type = "cpu";
+-			compatible = "arm,cortex-a72";
+-			reg = <0x102>;
++			compatible = "arm,cortex-a72", "arm,armv8";
++			reg = <0 0x102>;
+ 			next-level-cache = <&l2_1>;
+-			enable-method = "psci";
+ 		};
+ 
+ 		cpu7: cpu@103 {
+ 			device_type = "cpu";
+-			compatible = "arm,cortex-a72";
+-			reg = <0x103>;
++			compatible = "arm,cortex-a72", "arm,armv8";
++			reg = <0 0x103>;
+ 			next-level-cache = <&l2_1>;
+-			enable-method = "psci";
+ 		};
+ 
+ 		l2_1: l2-cache1 {
+@@ -119,34 +111,30 @@ l2_1: l2-cache1 {
+ 		/* CLUSTER 2 */
+ 		cpu8: cpu@200 {
+ 			device_type = "cpu";
+-			compatible = "arm,cortex-a72";
+-			reg = <0x200>;
++			compatible = "arm,cortex-a72", "arm,armv8";
++			reg = <0 0x200>;
+ 			next-level-cache = <&l2_2>;
+-			enable-method = "psci";
+ 		};
+ 
+ 		cpu9: cpu@201 {
+ 			device_type = "cpu";
+-			compatible = "arm,cortex-a72";
+-			reg = <0x201>;
++			compatible = "arm,cortex-a72", "arm,armv8";
++			reg = <0 0x201>;
+ 			next-level-cache = <&l2_2>;
+-			enable-method = "psci";
+ 		};
+ 
+ 		cpu10: cpu@202 {
+ 			device_type = "cpu";
+-			compatible = "arm,cortex-a72";
+-			reg = <0x202>;
++			compatible = "arm,cortex-a72", "arm,armv8";
++			reg = <0 0x202>;
+ 			next-level-cache = <&l2_2>;
+-			enable-method = "psci";
+ 		};
+ 
+ 		cpu11: cpu@203 {
+ 			device_type = "cpu";
+-			compatible = "arm,cortex-a72";
+-			reg = <0x203>;
++			compatible = "arm,cortex-a72", "arm,armv8";
++			reg = <0 0x203>;
+ 			next-level-cache = <&l2_2>;
+-			enable-method = "psci";
+ 		};
+ 
+ 		l2_2: l2-cache2 {
+@@ -158,34 +146,30 @@ l2_2: l2-cache2 {
+ 		/* CLUSTER 3 */
+ 		cpu12: cpu@300 {
+ 			device_type = "cpu";
+-			compatible = "arm,cortex-a72";
+-			reg = <0x300>;
++			compatible = "arm,cortex-a72", "arm,armv8";
++			reg = <0 0x300>;
+ 			next-level-cache = <&l2_3>;
+-			enable-method = "psci";
+ 		};
+ 
+ 		cpu13: cpu@301 {
+ 			device_type = "cpu";
+-			compatible = "arm,cortex-a72";
+-			reg = <0x301>;
++			compatible = "arm,cortex-a72", "arm,armv8";
++			reg = <0 0x301>;
+ 			next-level-cache = <&l2_3>;
+-			enable-method = "psci";
+ 		};
+ 
+ 		cpu14: cpu@302 {
+ 			device_type = "cpu";
+-			compatible = "arm,cortex-a72";
+-			reg = <0x302>;
++			compatible = "arm,cortex-a72", "arm,armv8";
++			reg = <0 0x302>;
+ 			next-level-cache = <&l2_3>;
+-			enable-method = "psci";
+ 		};
+ 
+ 		cpu15: cpu@303 {
+ 			device_type = "cpu";
+-			compatible = "arm,cortex-a72";
+-			reg = <0x303>;
++			compatible = "arm,cortex-a72", "arm,armv8";
++			reg = <0 0x303>;
+ 			next-level-cache = <&l2_3>;
+-			enable-method = "psci";
+ 		};
+ 
+ 		l2_3: l2-cache3 {
+diff --git a/arch/arm64/boot/dts/amd/elba-asic-common.dtsi b/arch/arm64/boot/dts/amd/elba-asic-common.dtsi
+index a3c065a5e7fe..a12727cb61ac 100644
+--- a/arch/arm64/boot/dts/amd/elba-asic-common.dtsi
++++ b/arch/arm64/boot/dts/amd/elba-asic-common.dtsi
+@@ -61,11 +61,20 @@ &wdt0 {
+ &i2c0 {
+ 	clock-frequency = <100000>;
+ 	status = "okay";
++	temp-sensor@4c {
++		compatible = "ti,tmp451";
++		reg = <0x4c>;
++	};
+ 
+ 	rtc@51 {
+ 		compatible = "nxp,pcf85263";
+ 		reg = <0x51>;
+ 	};
++
++	regulator@62 {
++		compatible = "ti,tps53659";
++		reg = <0x62>;
++	};
+ };
+ 
+ &spi0 {
+diff --git a/arch/arm64/boot/dts/amd/elba-asic-flash128.dts b/arch/arm64/boot/dts/amd/elba-asic-flash128.dts
+new file mode 100644
+index 000000000000..e10854a7610b
+--- /dev/null
++++ b/arch/arm64/boot/dts/amd/elba-asic-flash128.dts
+@@ -0,0 +1,29 @@
++// SPDX-License-Identifier: (GPL-2.0-only or BSD-2-Clause)
++/*
++ * Copyright 2020-2022 Advanced Micro Devices, Inc.
++ */
++
++/dts-v1/;
++
++#include "elba.dtsi"
++#include "elba-16core.dtsi"
++#include "elba-16core-spin-table.dtsi"
++#include "elba-asic-common.dtsi"
++#include "elba-flash128-parts.dtsi"
++#include "elba-asic-memory.dtsi"
++#include "elba-mdev.dtsi"
++
++/ {
++	model = "AMD Pensando Elba Board";
++	compatible = "amd,pensando-elba";
++
++	aliases {
++		serial0 = &uart0;
++		spi0 = &spi0;
++		spi1 = &qspi;
++	};
++
++	chosen {
++		stdout-path = "serial0:115200n8";
++	};
++};
+diff --git a/arch/arm64/boot/dts/amd/elba-asic-psci-flash128.dts b/arch/arm64/boot/dts/amd/elba-asic-psci-flash128.dts
+new file mode 100644
+index 000000000000..1058e71ef61d
+--- /dev/null
++++ b/arch/arm64/boot/dts/amd/elba-asic-psci-flash128.dts
+@@ -0,0 +1,29 @@
++// SPDX-License-Identifier: (GPL-2.0-only or BSD-2-Clause)
++/*
++ * Copyright 2020-2022 Advanced Micro Devices, Inc.
++ */
++
++/dts-v1/;
++
++#include "elba.dtsi"
++#include "elba-16core.dtsi"
++#include "elba-16core-psci.dtsi"
++#include "elba-asic-common.dtsi"
++#include "elba-flash128-parts.dtsi"
++#include "elba-asic-memory.dtsi"
++#include "elba-mdev.dtsi"
++
++/ {
++	model = "AMD Pensando Elba Board";
++	compatible = "amd,pensando-elba";
++
++	aliases {
++		serial0 = &uart0;
++		spi0 = &spi0;
++		spi1 = &qspi;
++	};
++
++	chosen {
++		stdout-path = "serial0:115200n8";
++	};
++};
+diff --git a/arch/arm64/boot/dts/amd/elba-asic-psci.dts b/arch/arm64/boot/dts/amd/elba-asic-psci.dts
+new file mode 100644
+index 000000000000..1837230c0e6f
+--- /dev/null
++++ b/arch/arm64/boot/dts/amd/elba-asic-psci.dts
+@@ -0,0 +1,29 @@
++// SPDX-License-Identifier: (GPL-2.0-only or BSD-2-Clause)
++/*
++ * Copyright 2020-2022 Advanced Micro Devices, Inc.
++ */
++
++/dts-v1/;
++
++#include "elba.dtsi"
++#include "elba-16core.dtsi"
++#include "elba-16core-psci.dtsi"
++#include "elba-asic-common.dtsi"
++#include "elba-flash-parts.dtsi"
++#include "elba-asic-memory.dtsi"
++#include "elba-mdev.dtsi"
++
++/ {
++	model = "AMD Pensando Elba Board";
++	compatible = "amd,pensando-elba";
++
++	aliases {
++		serial0 = &uart0;
++		spi0 = &spi0;
++		spi1 = &qspi;
++	};
++
++	chosen {
++		stdout-path = "serial0:115200n8";
++	};
++};
+diff --git a/arch/arm64/boot/dts/amd/elba-asic.dts b/arch/arm64/boot/dts/amd/elba-asic.dts
+index f05d4e9a6350..a8adf2a4bf33 100644
+--- a/arch/arm64/boot/dts/amd/elba-asic.dts
++++ b/arch/arm64/boot/dts/amd/elba-asic.dts
+@@ -9,6 +9,7 @@
+ 
+ #include "elba.dtsi"
+ #include "elba-16core.dtsi"
++#include "elba-16core-spin-table.dtsi"
+ #include "elba-asic-common.dtsi"
+ #include "elba-flash-parts.dtsi"
+ #include "elba-asic-memory.dtsi"
+@@ -16,7 +17,7 @@
+ 
+ / {
+ 	model = "AMD Pensando Elba Board";
+-	compatible = "amd,pensando-elba-ortano", "amd,pensando-elba";
++	compatible = "amd,pensando-elba";
+ 
+ 	aliases {
+ 		serial0 = &uart0;
+diff --git a/arch/arm64/boot/dts/amd/elba-flash-parts.dtsi b/arch/arm64/boot/dts/amd/elba-flash-parts.dtsi
+index cf761a05a81f..2da1aff285fb 100644
+--- a/arch/arm64/boot/dts/amd/elba-flash-parts.dtsi
++++ b/arch/arm64/boot/dts/amd/elba-flash-parts.dtsi
+@@ -100,7 +100,7 @@ partition@6a00000 {
+ 		};
+ 
+ 		partition@6e00000 {
+-			label = "spare";
++			label = "flashobfl";
+ 			reg = <0x6e00000 0x1200000>;
+ 		};
+ 
+@@ -115,3 +115,10 @@ partition@ffe0000 {
+ 		};
+ 	};
+ };
++
++&soc {
++	panicdump@740b0000 {
++		compatible = "pensando,capri-crash";
++		reg = <0x0 0x740b0000 0x0 0x20000>;
++	};
++};
+diff --git a/arch/arm64/boot/dts/amd/elba-flash128-parts.dtsi b/arch/arm64/boot/dts/amd/elba-flash128-parts.dtsi
+new file mode 100644
+index 000000000000..599ea9ac16a3
+--- /dev/null
++++ b/arch/arm64/boot/dts/amd/elba-flash128-parts.dtsi
+@@ -0,0 +1,113 @@
++// SPDX-License-Identifier: (GPL-2.0-only or BSD-2-Clause)
++/*
++ * Copyright 2020-2023 Advanced Micro Devices, Inc.
++ */
++
++&flash0 {
++	partitions {
++		compatible = "fixed-partitions";
++		#address-cells = <1>;
++		#size-cells = <1>;
++		partition@0 {
++			label = "rsvd";
++			reg = <0x0 0x10000>;
++			read-only;
++		};
++
++		partition@10000 {
++			label = "flash";
++			reg = <0x10000 0x7ff0000>;
++		};
++
++		partition@f0000 {
++			label = "golduenv";
++			reg = <0xf0000 0x10000>;
++		};
++
++		partition@100000 {
++			label = "boot0";
++			reg = <0x100000 0x80000>;
++		};
++
++		partition@180000 {
++			label = "golduboot";
++			reg = <0x180000 0x200000>;
++		};
++
++		partition@380000 {
++			label = "brdcfg0";
++			reg = <0x380000 0x10000>;
++		};
++
++		partition@390000 {
++			label = "brdcfg1";
++			reg = <0x390000 0x10000>;
++		};
++
++		partition@400000 {
++			label = "goldfw";
++			reg = <0x400000 0x3c00000>;
++		};
++
++		partition@4010000 {
++			label = "fwmap";
++			reg = <0x4010000 0x20000>;
++		};
++
++		partition@4030000 {
++			label = "fwsel";
++			reg = <0x4030000 0x20000>;
++		};
++
++		partition@4090000 {
++			label = "bootlog";
++			reg = <0x4090000 0x20000>;
++		};
++
++		partition@40b0000 {
++			label = "panicbuf";
++			reg = <0x40b0000 0x20000>;
++		};
++
++		partition@40d0000 {
++			label = "uservars";
++			reg = <0x40d0000 0x20000>;
++		};
++
++		partition@4200000 {
++			label = "uboota";
++			reg = <0x4200000 0x400000>;
++		};
++
++		partition@4600000 {
++			label = "ubootb";
++			reg = <0x4600000 0x400000>;
++		};
++
++		partition@4a00000 {
++			label = "mainfwa";
++			reg = <0x4a00000 0x1000000>;
++		};
++
++		partition@5a00000 {
++			label = "mainfwb";
++			reg = <0x5a00000 0x1000000>;
++		};
++
++		partition@6a00000 {
++			label = "diagfw";
++			reg = <0x6a00000 0x15e0000>;
++		};
++		partition@7fe0000 {
++			label = "ubootenv";
++			reg = <0x7fe0000 0x10000>;
++		};
++	};
++};
++
++&soc {
++	panicdump@740b0000 {
++		compatible = "pensando,capri-crash";
++		reg = <0x0 0x740b0000 0x0 0x20000>;
++	};
++};
+diff --git a/arch/arm64/boot/dts/amd/elba-secure.dts b/arch/arm64/boot/dts/amd/elba-secure.dts
+new file mode 100644
+index 000000000000..6de493547a27
+--- /dev/null
++++ b/arch/arm64/boot/dts/amd/elba-secure.dts
+@@ -0,0 +1,37 @@
++// SPDX-License-Identifier: (GPL-2.0-only or BSD-2-Clause)
++/*
++ * Copyright 2020-2022 Advanced Micro Devices, Inc.
++ */
++
++/dts-v1/;
++
++#include "elba.dtsi"
++#include "elba-16core.dtsi"
++#include "elba-16core-psci.dtsi"
++#include "elba-asic-common.dtsi"
++#include "elba-flash-parts.dtsi"
++#include "elba-asic-memory.dtsi"
++#include "elba-mdev.dtsi"
++
++/ {
++	model = "AMD Pensando Elba Board";
++	compatible = "amd,pensando-elba";
++
++	aliases {
++		serial0 = &uart0;
++		spi0 = &spi0;
++		spi1 = &qspi;
++	};
++
++	chosen {
++		stdout-path = "serial0:115200n8";
++	};
++};
++
++/ {
++	firmware {
++		penfw {
++			compatible = "pensando,penfw";
++		};
++	};
++};
+diff --git a/arch/arm64/boot/dts/amd/elba.dtsi b/arch/arm64/boot/dts/amd/elba.dtsi
+index 59b82a3c23e1..98d790ed4968 100644
+--- a/arch/arm64/boot/dts/amd/elba.dtsi
++++ b/arch/arm64/boot/dts/amd/elba.dtsi
+@@ -90,6 +90,7 @@ i2c0: i2c@400 {
+ 			#address-cells = <1>;
+ 			#size-cells = <0>;
+ 			i2c-sda-hold-time-ns = <480>;
++			snps,sda-timeout-ms = <750>;
+ 			interrupts = <GIC_SPI 4 IRQ_TYPE_LEVEL_HIGH>;
+ 			status = "disabled";
+ 		};
+@@ -102,6 +103,30 @@ wdt0: watchdog@1400 {
+ 			status = "disabled";
+ 		};
+ 
++		wdt1: watchdog@1800 {
++			compatible = "snps,dw-wdt";
++			reg = <0x0 0x1800 0x0 0x100>;
++			clocks = <&ahb_clk>;
++			interrupts = <GIC_SPI 11 IRQ_TYPE_LEVEL_HIGH>;
++			status = "disabled";
++		};
++
++		wdt2: watchdog@1c00 {
++			compatible = "snps,dw-wdt";
++			reg = <0x0 0x1c00 0x0 0x100>;
++			clocks = <&ahb_clk>;
++			interrupts = <GIC_SPI 12 IRQ_TYPE_LEVEL_HIGH>;
++			status = "disabled";
++		};
++
++		wdt3: watchdog@2000 {
++			compatible = "snps,dw-wdt";
++			reg = <0x0 0x2000 0x0 0x100>;
++			clocks = <&ahb_clk>;
++			interrupts = <GIC_SPI 13 IRQ_TYPE_LEVEL_HIGH>;
++			status = "disabled";
++		};
++
+ 		qspi: spi@2400 {
+ 			compatible = "amd,pensando-elba-qspi", "cdns,qspi-nor";
+ 			reg = <0x0 0x2400 0x0 0x400>,
+@@ -277,6 +302,9 @@ emmc: mmc@30440000 {
+ 			cdns,phy-input-delay-sd-uhs-sdr50 = <0x6>;
+ 			cdns,phy-input-delay-sd-uhs-ddr50 = <0x16>;
+ 			mmc-ddr-1_8v;
++			cdns,phy-dll-delay-sdclk = <0>;
++			cdns,phy-dll-delay-sdclk-hsmmc = <0>;
++			cdns,mmc-ddr-1_8v;
+ 			status = "disabled";
+ 		};
+ 
+diff --git a/arch/arm64/boot/dts/amd/giglio-asic-common.dtsi b/arch/arm64/boot/dts/amd/giglio-asic-common.dtsi
+index 979b5aff9552..8fd55891fe31 100644
+--- a/arch/arm64/boot/dts/amd/giglio-asic-common.dtsi
++++ b/arch/arm64/boot/dts/amd/giglio-asic-common.dtsi
+@@ -1,4 +1,7 @@
+-// SPDX-License-Identifier: GPL-2.0
++// SPDX-License-Identifier: (GPL-2.0-only or BSD-2-Clause)
++/*
++ * Copyright 2020-2022 Advanced Micro Devices, Inc.
++ */
+ 
+ #include <dt-bindings/reset/amd,pensando-elba-reset.h>
+ 
+diff --git a/arch/arm64/boot/dts/amd/giglio-asic-flash128.dts b/arch/arm64/boot/dts/amd/giglio-asic-flash128.dts
+new file mode 100644
+index 000000000000..994d97b07eb0
+--- /dev/null
++++ b/arch/arm64/boot/dts/amd/giglio-asic-flash128.dts
+@@ -0,0 +1,29 @@
++// SPDX-License-Identifier: (GPL-2.0-only or BSD-2-Clause)
++/*
++ * Copyright 2020-2022 Advanced Micro Devices, Inc.
++ */
++
++/dts-v1/;
++
++#include "giglio.dtsi"
++#include "elba-16core.dtsi"
++#include "elba-16core-spin-table.dtsi"
++#include "giglio-asic-common.dtsi"
++#include "elba-flash128-parts.dtsi"
++#include "elba-asic-memory.dtsi"
++#include "elba-mdev.dtsi"
++
++/ {
++	model = "AMD Pensando Giglio Board";
++	compatible = "amd,pensando-giglio";
++
++	aliases {
++		serial0 = &uart0;
++		spi0 = &spi0;
++		spi1 = &qspi;
++	};
++
++	chosen {
++		stdout-path = "serial0:115200n8";
++	};
++};
+diff --git a/arch/arm64/boot/dts/amd/giglio-asic-psci-flash128.dts b/arch/arm64/boot/dts/amd/giglio-asic-psci-flash128.dts
+new file mode 100644
+index 000000000000..eed330c0331d
+--- /dev/null
++++ b/arch/arm64/boot/dts/amd/giglio-asic-psci-flash128.dts
+@@ -0,0 +1,29 @@
++// SPDX-License-Identifier: (GPL-2.0-only or BSD-2-Clause)
++/*
++ * Copyright 2020-2022 Advanced Micro Devices, Inc.
++ */
++
++/dts-v1/;
++
++#include "giglio.dtsi"
++#include "elba-16core.dtsi"
++#include "elba-16core-psci.dtsi"
++#include "giglio-asic-common.dtsi"
++#include "elba-flash128-parts.dtsi"
++#include "elba-asic-memory.dtsi"
++#include "elba-mdev.dtsi"
++
++/ {
++	model = "AMD Pensando Giglio Board";
++	compatible = "amd,pensando-giglio";
++
++	aliases {
++		serial0 = &uart0;
++		spi0 = &spi0;
++		spi1 = &qspi;
++	};
++
++	chosen {
++		stdout-path = "serial0:115200n8";
++	};
++};
+diff --git a/arch/arm64/boot/dts/amd/giglio-asic-psci.dts b/arch/arm64/boot/dts/amd/giglio-asic-psci.dts
+new file mode 100644
+index 000000000000..c69b83d89001
+--- /dev/null
++++ b/arch/arm64/boot/dts/amd/giglio-asic-psci.dts
+@@ -0,0 +1,29 @@
++// SPDX-License-Identifier: (GPL-2.0-only or BSD-2-Clause)
++/*
++ * Copyright 2020-2022 Advanced Micro Devices, Inc.
++ */
++
++/dts-v1/;
++
++#include "giglio.dtsi"
++#include "elba-16core.dtsi"
++#include "elba-16core-psci.dtsi"
++#include "giglio-asic-common.dtsi"
++#include "elba-flash-parts.dtsi"
++#include "elba-asic-memory.dtsi"
++#include "elba-mdev.dtsi"
++
++/ {
++	model = "AMD Pensando Giglio Board";
++	compatible = "amd,pensando-giglio";
++
++	aliases {
++		serial0 = &uart0;
++		spi0 = &spi0;
++		spi1 = &qspi;
++	};
++
++	chosen {
++		stdout-path = "serial0:115200n8";
++	};
++};
+diff --git a/arch/arm64/boot/dts/amd/giglio-asic.dts b/arch/arm64/boot/dts/amd/giglio-asic.dts
+index a32e10e5ce82..4043dbdd329c 100644
+--- a/arch/arm64/boot/dts/amd/giglio-asic.dts
++++ b/arch/arm64/boot/dts/amd/giglio-asic.dts
+@@ -9,6 +9,7 @@
+ 
+ #include "giglio.dtsi"
+ #include "elba-16core.dtsi"
++#include "elba-16core-spin-table.dtsi"
+ #include "giglio-asic-common.dtsi"
+ #include "elba-flash-parts.dtsi"
+ #include "elba-asic-memory.dtsi"
+@@ -16,7 +17,7 @@
+ 
+ / {
+ 	model = "AMD Pensando Giglio Board";
+-	compatible = "amd, pensando-giglio-ginestra", "amd,pensando-giglio";
++	compatible = "amd,pensando-giglio";
+ 
+ 	aliases {
+ 		serial0 = &uart0;
+diff --git a/arch/arm64/boot/dts/amd/giglio-secure.dts b/arch/arm64/boot/dts/amd/giglio-secure.dts
+new file mode 100644
+index 000000000000..6f11325ea64d
+--- /dev/null
++++ b/arch/arm64/boot/dts/amd/giglio-secure.dts
+@@ -0,0 +1,37 @@
++// SPDX-License-Identifier: (GPL-2.0-only or BSD-2-Clause)
++/*
++ * Copyright 2020-2022 Advanced Micro Devices, Inc.
++ */
++
++/dts-v1/;
++
++#include "giglio.dtsi"
++#include "elba-16core.dtsi"
++#include "elba-16core-psci.dtsi"
++#include "giglio-asic-common.dtsi"
++#include "elba-flash-parts.dtsi"
++#include "elba-asic-memory.dtsi"
++#include "elba-mdev.dtsi"
++
++/ {
++	model = "AMD Pensando Giglio Board";
++	compatible = "amd,pensando-giglio";
++
++	aliases {
++		serial0 = &uart0;
++		spi0 = &spi0;
++		spi1 = &qspi;
++	};
++
++	chosen {
++		stdout-path = "serial0:115200n8";
++	};
++};
++
++/ {
++	firmware {
++		penfw {
++			compatible = "pensando,penfw";
++		};
++	};
++};
+diff --git a/arch/arm64/boot/dts/amd/giglio.dtsi b/arch/arm64/boot/dts/amd/giglio.dtsi
+index 9948519a2853..129b28dc1932 100644
+--- a/arch/arm64/boot/dts/amd/giglio.dtsi
++++ b/arch/arm64/boot/dts/amd/giglio.dtsi
+@@ -1,8 +1,11 @@
+-// SPDX-License-Identifier: GPL-2.0
+-/* Copyright (c) 2019-2022, Pensando Systems Inc. */
++// SPDX-License-Identifier: (GPL-2.0-only or BSD-2-Clause)
++/*
++ * Copyright 2020-2022 Advanced Micro Devices, Inc.
++ */
+ 
+ #include <dt-bindings/gpio/gpio.h>
+ #include "dt-bindings/interrupt-controller/arm-gic.h"
++#include "dt-bindings/soc/pensando,capmem.h"
+ 
+ / {
+ 	interrupt-parent = <&gic>;
+@@ -57,11 +60,14 @@ uio_penmsi {
+ 
+ 	rstcause {
+ 		compatible = "pensando,rstcause";
+-		pensando,causeregs = <&mssoc 0x2084>;
++		pensando,causeregs = <&syscon 0x2084>;
+ 	};
+ 
+ 	capmem {
+ 		compatible = "pensando,capmem";
++		pensando,capmem-fixed-ranges =
++			<0x0 0x200000 0x0 0x6fe00000 DSC_MEM_ATTR_DEVICE>,
++			<0x4 0x0 0x0 0x400000 DSC_MEM_ATTR_DEVICE>;
+ 	};
+ 
+ 	soc: soc {
+@@ -165,9 +171,9 @@ qspi: spi@2400 {
+ 		};
+ 
+ 		spi0: spi@2800 {
+-			compatible = "pensando,elba-spi";
++			compatible = "amd,pensando-elba-spi";
+ 			reg = <0x0 0x2800 0x0 0x100>;
+-			pensando,spics = <&mssoc 0x2468 0>;
++			amd,pensando-elba-syscon = <&syscon>;
+ 			clocks = <&ahb_clk>;
+ 			interrupts = <GIC_SPI 9 IRQ_TYPE_LEVEL_HIGH>;
+ 			#address-cells = <1>;
+@@ -177,9 +183,9 @@ spi0: spi@2800 {
+ 		};
+ 
+ 		spi1: spi@2c00 {
+-			compatible = "pensando,elba-spi";
++			compatible = "amd,pensando-elba-spi";
+ 			reg = <0x0 0x2c00 0x0 0x100>;
+-			pensando,spics = <&mssoc 0x2fd8 0>;
++			amd,pensando-elba-syscon = <&syscon>;
+ 			clocks = <&ahb_clk>;
+ 			interrupts = <GIC_SPI 8 IRQ_TYPE_LEVEL_HIGH>;
+ 			#address-cells = <1>;
+@@ -388,8 +394,8 @@ emmc: mmc@30440000 {
+ 			status = "disabled";
+ 		};
+ 
+-		mssoc: mssoc@307c0000 {
+-			compatible = "pensando,mssoc", "syscon";
++		syscon: syscon@307c0000 {
++			compatible = "amd,pensando-elba-syscon", "syscon";
+ 			reg = <0x0 0x307c0000 0x0 0x3000>;
+ 		};
+ 
+@@ -405,6 +411,17 @@ pcie@307c2480 {
+ 			       0x0 0x20000000 0x0 0x380000>;	/* PXB Base */
+ 		};
+ 
++		kpcimgr@20000000 {
++			compatible = "pensando,kpcimgr";
++			msi-parent = <&gic_its 0xf>;
++			shmem-index = <3>;
++			hwmem-index = <2>;
++			reg =  <0x0 0x20000000 0x0 0x00380000   /* PXB Base */
++				0x0 0x61800000 0x0 0x00101000   /* Interrupts */
++				0x0 0xc4000000 0x0 0x01000000   /* HWMEM */
++				0x0 0x0        0x0 0x02000000>; /* SHMEM */
++		};
++
+ 		/*
+ 		 * panic: panicdump@0 {
+ 		 *	compatible = "pensando,capri-crash";
+diff --git a/arch/arm64/configs/elba_defconfig b/arch/arm64/configs/elba_defconfig
+index ec72a714f8b9..da52d90a27db 100644
+--- a/arch/arm64/configs/elba_defconfig
++++ b/arch/arm64/configs/elba_defconfig
+@@ -232,7 +232,7 @@ CONFIG_COMMON_CLK_CS2000_CP=y
+ # CONFIG_HISILICON_ERRATUM_161010101 is not set
+ # CONFIG_ARM64_ERRATUM_858921 is not set
+ # CONFIG_IOMMU_SUPPORT is not set
+-CONFIG_PENSANDO_SOC_CAPMEM_HUGEPAGE=y
++CONFIG_TRANSPARENT_HUGEPAGE=y
+ CONFIG_PENSANDO_SOC_BSM_ENABLE=y
+ CONFIG_PENSANDO_SOC_PENFW=y
+ CONFIG_EXTCON=y
+diff --git a/arch/arm64/configs/giglio_defconfig b/arch/arm64/configs/giglio_defconfig
+index 8cdb78967a97..e5a455012b26 100644
+--- a/arch/arm64/configs/giglio_defconfig
++++ b/arch/arm64/configs/giglio_defconfig
+@@ -256,7 +256,7 @@ CONFIG_CLK_QORIQ=y
+ # CONFIG_ARM64_ERRATUM_858921 is not set
+ # CONFIG_IOMMU_SUPPORT is not set
+ CONFIG_ARCH_PENSANDO_GIGLIO_SOC=y
+-CONFIG_PENSANDO_SOC_CAPMEM_HUGEPAGE=y
++CONFIG_TRANSPARENT_HUGEPAGE=y
+ CONFIG_PENSANDO_SOC_BSM_ENABLE=y
+ CONFIG_PENSANDO_SOC_PENFW=y
+ CONFIG_EXTCON=y
+-- 
+2.25.1
+

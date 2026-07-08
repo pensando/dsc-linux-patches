@@ -1,0 +1,414 @@
+From 397853739df91d499bb0c0245493e9cb15be6fc4 Mon Sep 17 00:00:00 2001
+From: Hiren Mehta <hiren.mehta@amd.com>
+Date: Tue, 7 Jul 2026 17:17:24 -0700
+Subject: drivers/i2c/rd1173: formatting and mctp-i2c dynamic debug logging fix
+
+Fix code formatting in the rd1173 Lattice SPI-to-I2C bus driver and
+fix dynamic debug logging in the mctp-i2c driver to use proper format
+specifiers.
+
+Signed-off-by: Hiren Mehta <hiren.mehta@amd.com>
+---
+ drivers/i2c/busses/i2c-rd1173.c | 277 ++++++++++++++++----------------
+ drivers/net/mctp/mctp-i2c.c     |  20 +--
+ 2 files changed, 147 insertions(+), 150 deletions(-)
+
+diff --git a/drivers/i2c/busses/i2c-rd1173.c b/drivers/i2c/busses/i2c-rd1173.c
+index 31f1d5cfbb1a..6eba6118d733 100644
+--- a/drivers/i2c/busses/i2c-rd1173.c
++++ b/drivers/i2c/busses/i2c-rd1173.c
+@@ -2,7 +2,7 @@
+ /*
+  * Lattice RD1173 SPI to I2C bus interface driver
+  *
+- * Copyright (C) 2020-2022 Pensando Systems, Inc.
++ * Copyright (C) 2020-2026 Pensando Systems, Inc.
+  */
+ 
+ #include <linux/gpio/consumer.h>
+@@ -18,62 +18,62 @@
+ #include <linux/sysfs.h>
+ 
+ /* SPI command bits 7:4 */
+-#define RD1173_CMD_REG_WR         0x00    /* write internal reg */
+-#define RD1173_CMD_REG_RD         0x10    /* read internal reg */
+-#define RD1173_CMD_INT_CHECK      0x20    /* interrupt check */
+-#define RD1173_CMD_I2C_WR_N       0x30    /* write N bytes */
+-#define RD1173_CMD_I2C_RD_N       0x40    /* read N bytes */
+-#define RD1173_CMD_RD_RX_FIFO     0x50    /* read rx fifo */
++#define RD1173_CMD_REG_WR	  0x00	  /* write internal reg */
++#define RD1173_CMD_REG_RD	  0x10	  /* read internal reg */
++#define RD1173_CMD_INT_CHECK	  0x20	  /* interrupt check */
++#define RD1173_CMD_I2C_WR_N	  0x30	  /* write N bytes */
++#define RD1173_CMD_I2C_RD_N	  0x40	  /* read N bytes */
++#define RD1173_CMD_RD_RX_FIFO	  0x50	  /* read rx fifo */
+ 
+ /* Register address bits 3:0 */
+-#define RD1173_FIFO_STATUS_REG    0x01
+-#define RD1173_I2C0_CONFIG_REG    0x04
+-#define RD1173_I2C0_MODE_REG      0x05
++#define RD1173_FIFO_STATUS_REG	  0x01
++#define RD1173_I2C0_CONFIG_REG	  0x04
++#define RD1173_I2C0_MODE_REG	  0x05
+ #define RD1173_I2C0_CMD_STAT_REG  0x06
+-#define RD1173_I2C1_CONFIG_REG    0x0a
+-#define RD1173_I2C1_MODE_REG      0x0b
++#define RD1173_I2C1_CONFIG_REG	  0x0a
++#define RD1173_I2C1_MODE_REG	  0x0b
+ #define RD1173_I2C1_CMD_STAT_REG  0x0c
+ 
+ /* Register offset from master regbase */
+-#define RD1173_CONFIG_REG         0x00
+-#define RD1173_MODE_REG           0x01
+-#define RD1173_CMD_STAT_REG       0x02
++#define RD1173_CONFIG_REG	  0x00
++#define RD1173_MODE_REG		  0x01
++#define RD1173_CMD_STAT_REG	  0x02
+ 
+ /* FIFO register definitions */
+-#define RD1173_FIFO_RX0_FULL      0x80
+-#define RD1173_FIFO_RX0_EMPTY     0x40
+-#define RD1173_FIFO_TX0_FULL      0x20
+-#define RD1173_FIFO_TX0_EMPTY     0x10
+-#define RD1173_FIFO_RX1_FULL      0x08
+-#define RD1173_FIFO_RX1_EMPTY     0x04
+-#define RD1173_FIFO_TX1_FULL      0x02
+-#define RD1173_FIFO_TX1_EMPTY     0x01
++#define RD1173_FIFO_RX0_FULL	  0x80
++#define RD1173_FIFO_RX0_EMPTY	  0x40
++#define RD1173_FIFO_TX0_FULL	  0x20
++#define RD1173_FIFO_TX0_EMPTY	  0x10
++#define RD1173_FIFO_RX1_FULL	  0x08
++#define RD1173_FIFO_RX1_EMPTY	  0x04
++#define RD1173_FIFO_TX1_FULL	  0x02
++#define RD1173_FIFO_TX1_EMPTY	  0x01
+ 
+ /* Configuration register definitions */
+-#define RD1173_CONFIG_RESET       0x80
++#define RD1173_CONFIG_RESET	  0x80
+ #define RD1173_CONFIG_RXFIFO_CLR  0x40
+ #define RD1173_CONFIG_TXFIFO_CLR  0x20
+-#define RD1173_CONFIG_ABORT       0x10
++#define RD1173_CONFIG_ABORT	  0x10
+ #define RD1173_CONFIG_RXREAD_CLR  0x08
+ #define RD1173_CONFIG_TXREAD_CLR  0x04
+-#define RD1173_CONFIG_INT_CLR     0x02
+-#define RD1173_CONFIG_START       0x01
++#define RD1173_CONFIG_INT_CLR	  0x02
++#define RD1173_CONFIG_START	  0x01
+ 
+ /* Mode register definitions */
+-#define RD1173_MODE_BPS1          0x80
+-#define RD1173_MODE_BPS0          0x40
+-#define RD1173_MODE_TX_IE         0x20
+-#define RD1173_MODE_ACK_POL       0x10
+-#define RD1173_MODE_RX_IE         0x08
++#define RD1173_MODE_BPS1	  0x80
++#define RD1173_MODE_BPS0	  0x40
++#define RD1173_MODE_TX_IE	  0x20
++#define RD1173_MODE_ACK_POL	  0x10
++#define RD1173_MODE_RX_IE	  0x08
+ 
+ /* Command status register definitions */
+-#define RD1173_STAT_I2C_BUSY      0x80
+-#define RD1173_STAT_NO_ANS        0x40
+-#define RD1173_STAT_NO_ACK        0x20
+-#define RD1173_STAT_TX_ERR        0x10
+-#define RD1173_STAT_RX_ERR        0x08
+-#define RD1173_STAT_ABORT_ACK     0x04
+-#define RD1173_STAT_TS            0x02
++#define RD1173_STAT_I2C_BUSY	  0x80
++#define RD1173_STAT_NO_ANS	  0x40
++#define RD1173_STAT_NO_ACK	  0x20
++#define RD1173_STAT_TX_ERR	  0x10
++#define RD1173_STAT_RX_ERR	  0x08
++#define RD1173_STAT_ABORT_ACK	  0x04
++#define RD1173_STAT_TS		  0x02
+ 
+ #define RD1173_RESET_ERRORS	(RD1173_STAT_I2C_BUSY | \
+ 				 RD1173_STAT_TX_ERR | \
+@@ -129,19 +129,19 @@ struct chipdesc {
+ 	const struct regmap_config *regmap_cfg;
+ };
+ 
+-#define i2c_show_simple(field, name, format_string, cast)                  \
+-static ssize_t                                                             \
++#define i2c_show_simple(field, name, format_string, cast)		   \
++static ssize_t								   \
+ show_##name(struct device *dev, struct device_attribute *attr, char *buf)  \
+-{                                                                          \
+-	struct spi_device *spi = to_spi_device(dev);                       \
+-	struct rd1173dev *rd1173dev = spi_get_drvdata(spi);                \
+-	struct i2c_stats *i2c_stats = &rd1173dev->stats;                   \
++{									   \
++	struct spi_device *spi = to_spi_device(dev);			   \
++	struct rd1173dev *rd1173dev = spi_get_drvdata(spi);		   \
++	struct i2c_stats *i2c_stats = &rd1173dev->stats;		   \
+ 									   \
+-	return snprintf(buf, 20, format_string, cast i2c_stats->field);    \
++	return snprintf(buf, 20, format_string, cast i2c_stats->field);	   \
+ }
+ 
+-#define i2c_attr_show(field, name, format_string, type)         \
+-	i2c_show_simple(field, name, format_string, (type))     \
++#define i2c_attr_show(field, name, format_string, type) \
++	i2c_show_simple(field, name, format_string, (type)); \
+ static DEVICE_ATTR(name, 0444, show_##name, NULL)
+ 
+ i2c_attr_show(i2c0_tx_complete, i2c0_tx_complete, "%d\n", u32);
+@@ -569,82 +569,79 @@ static void update_i2c_stats(struct rd1173_i2c_adapter *i2c, int readop)
+  * Returns the number of messages processed, or a negative errno on failure.
+  */
+ static int rd1173_xfer(struct i2c_adapter *adap,
+-                       struct i2c_msg *msgs, int num)
++		       struct i2c_msg *msgs, int num)
+ {
+-        struct rd1173_i2c_adapter *i2c = i2c_get_adapdata(adap);
+-        struct device *dev = &i2c->rd1173dev->spi->dev;
+-        int i, ret = 0;
+-        u32 state;
+-
+-        if (mutex_lock_interruptible(&i2c->rd1173dev->xfer_active))
+-                return -ERESTARTSYS;
+-
+-        i2c->rd1173dev->active_port = i2c->i2c_master;
+-
+-        for (i = 0; i < num; i++) {
+-                struct i2c_msg *msg = &msgs[i];
+-                bool readop = !!(msg->flags & I2C_M_RD);
+-                int remaining = msg->len;
+-                int offset = 0;
+-
+-                dev_dbg(dev, "i2c%d xfer: %s addr=0x%02x len=%d\n",
+-                        i2c->rd1173dev->active_port,
+-                        readop ? "RD" : "WR",
+-                        msg->addr, msg->len);
+-
+-                while (remaining > 0) {
+-                        int chunk = min(remaining, 8);
+-                        u8 tmp[9]; /* status + data */
+-
+-                        /* Prepare hardware for THIS chunk */
+-                        rd1173_fifo_clear(i2c);
+-                        rd1173_clear_cmdstat(i2c);
+-
+-                        reinit_completion(&i2c->rd1173dev->completion);
+-
+-                        if (readop) {
+-                                struct i2c_msg sub = *msg;
+-                                sub.len = chunk;
+-
+-                                ret = rd1173_read(i2c, &sub, chunk);
+-                        } else {
+-                                struct i2c_msg sub = *msg;
+-                                sub.len = chunk;
+-                                sub.buf = msg->buf + offset;
+-
+-                                ret = rd1173_write(i2c, &sub, chunk);
+-                        }
+-
+-                        if (ret) {
+-                                dev_err(dev, "RD1173: failed to issue %s\n",
+-                                        readop ? "read" : "write");
+-                                goto out_unlock;
+-                        }
+-
+-                        /* Wait for TS interrupt */
+-                        ret = wait_for_completion_timeout(
+-                                        &i2c->rd1173dev->completion,
+-                                        i2c->i2c_adap.timeout);
+-
+-                        if (ret == 0) {
+-                                dev_err(dev, "RD1173: timeout waiting for completion\n");
+-                                ret = -ETIMEDOUT;
+-                                goto out_unlock;
+-                        }
+-
+-                        /* Read final status */
+-                        ret = regmap_read(i2c->rd1173dev->regmap,
+-                                          i2c->offset + RD1173_CMD_STAT_REG,
+-                                          &state);
+-                        if (ret) {
+-                                dev_err(dev, "RD1173: failed to read CMD_STAT\n");
+-                                goto out_unlock;
+-                        }
+-
+-                        i2c->state = state;
+-                        update_i2c_stats(i2c, readop);
+-
+-                        /* Check for errors */
++	struct rd1173_i2c_adapter *i2c = i2c_get_adapdata(adap);
++	struct device *dev = &i2c->rd1173dev->spi->dev;
++	int i, ret = 0;
++	u32 state;
++
++	if (mutex_lock_interruptible(&i2c->rd1173dev->xfer_active))
++		return -ERESTARTSYS;
++
++	i2c->rd1173dev->active_port = i2c->i2c_master;
++
++	for (i = 0; i < num; i++) {
++		struct i2c_msg *msg = &msgs[i];
++		bool readop = !!(msg->flags & I2C_M_RD);
++		struct i2c_msg sub = *msg;
++		int remaining = msg->len;
++		int offset = 0;
++
++		dev_dbg(dev, "i2c%d xfer: %s addr=0x%02x len=%d\n",
++			i2c->rd1173dev->active_port,
++			readop ? "RD" : "WR",
++			msg->addr, msg->len);
++
++		while (remaining > 0) {
++			int chunk = min(remaining, 8);
++			u8 tmp[9]; /* status + data */
++
++			/* Prepare hardware for THIS chunk */
++			rd1173_fifo_clear(i2c);
++			rd1173_clear_cmdstat(i2c);
++
++			reinit_completion(&i2c->rd1173dev->completion);
++
++			if (readop) {
++				sub.len = chunk;
++				ret = rd1173_read(i2c, &sub, chunk);
++			} else {
++				sub.len = chunk;
++				sub.buf = msg->buf + offset;
++				ret = rd1173_write(i2c, &sub, chunk);
++			}
++
++			if (ret) {
++				dev_err(dev, "RD1173: failed to issue %s\n",
++					readop ? "read" : "write");
++				goto out_unlock;
++			}
++
++			/* Wait for TS interrupt */
++			ret = wait_for_completion_timeout(
++					&i2c->rd1173dev->completion,
++					i2c->i2c_adap.timeout);
++
++			if (ret == 0) {
++				dev_err(dev, "RD1173: timeout waiting for completion\n");
++				ret = -ETIMEDOUT;
++				goto out_unlock;
++			}
++
++			/* Read final status */
++			ret = regmap_read(i2c->rd1173dev->regmap,
++					  i2c->offset + RD1173_CMD_STAT_REG,
++					  &state);
++			if (ret) {
++				dev_err(dev, "RD1173: failed to read CMD_STAT\n");
++				goto out_unlock;
++			}
++
++			i2c->state = state;
++			update_i2c_stats(i2c, readop);
++
++			/* Check for errors */
+ 			if (state & RD1173_STAT_NO_ANS) {
+ 				dev_info(dev, "RD1173: NO_ANS state=0x%02x\n", state);
+ 				ret = -ENXIO;
+@@ -665,23 +662,23 @@ static int rd1173_xfer(struct i2c_adapter *adap,
+ 				goto out_unlock;
+ 			}
+ 
+-                        /* Read FIFO */
+-                        if (readop) {
+-                                ret = rd1173_read_buffer(i2c, tmp, chunk);
+-                                if (ret) {
+-                                        dev_err(dev, "RD1173: read_buffer failed\n");
+-                                        goto out_unlock;
+-                                }
++			/* Read FIFO */
++			if (readop) {
++				ret = rd1173_read_buffer(i2c, tmp, chunk);
++				if (ret) {
++					dev_err(dev, "RD1173: read_buffer failed\n");
++					goto out_unlock;
++				}
+ 
+-                                memcpy(msg->buf + offset, tmp + 1, chunk);
+-                        }
++				memcpy(msg->buf + offset, tmp + 1, chunk);
++			}
+ 
+-                        remaining -= chunk;
+-                        offset += chunk;
+-                }
+-        }
++			remaining -= chunk;
++			offset += chunk;
++		}
++	}
+ 
+-        ret = num;
++	ret = num;
+ 
+ out_unlock:
+ 	rd1173_clear_cmdstat(i2c);
+@@ -689,8 +686,8 @@ static int rd1173_xfer(struct i2c_adapter *adap,
+ 	if (ret < 0 && (i2c->state & RD1173_RESET_ERRORS))
+ 		rd1173_reset(i2c);
+ 
+-        mutex_unlock(&i2c->rd1173dev->xfer_active);
+-        return ret;
++	mutex_unlock(&i2c->rd1173dev->xfer_active);
++	return ret;
+ }
+ 
+ static u32 rd1173_func(struct i2c_adapter *adap)
+@@ -842,7 +839,7 @@ MODULE_DEVICE_TABLE(of, rd1173_of_match);
+ #endif
+ 
+ static struct spi_driver rd1173_driver = {
+-	.probe  = rd1173_probe,
++	.probe	= rd1173_probe,
+ 	.remove = rd1173_remove,
+ 	.driver = {
+ 		.name  = "i2c-rd1173",
+diff --git a/drivers/net/mctp/mctp-i2c.c b/drivers/net/mctp/mctp-i2c.c
+index 74e0ab0b7c17..f5596183cfd3 100644
+--- a/drivers/net/mctp/mctp-i2c.c
++++ b/drivers/net/mctp/mctp-i2c.c
+@@ -306,12 +306,12 @@ static int mctp_i2c_recv(struct mctp_i2c_dev *midev)
+ 		return -EINVAL;
+ 	}
+ 
+-	printk(KERN_DEBUG "mctp-i2c rx: dst=0x%02x src=0x%02x cmd=0x%02x bytes=%u len=%zu\n",
+-	       hdr->dest_slave >> 1, hdr->source_slave >> 1,
+-	       hdr->command, hdr->byte_count, recvlen);
++	pr_debug("mctp-i2c rx: dst=0x%02x src=0x%02x cmd=0x%02x bytes=%u len=%zu\n",
++		 hdr->dest_slave >> 1, hdr->source_slave >> 1,
++		 hdr->command, hdr->byte_count, recvlen);
+ 
+-	print_hex_dump(KERN_DEBUG, "mctp-i2c rx: ", DUMP_PREFIX_NONE, 16, 1,
+-		       midev->rx_buffer, recvlen, false);
++	print_hex_dump_debug("mctp-i2c rx: ", DUMP_PREFIX_NONE, 16, 1,
++			     midev->rx_buffer, recvlen, false);
+ 
+ 	skb = netdev_alloc_skb(ndev, recvlen);
+ 	if (!skb) {
+@@ -487,12 +487,12 @@ static void mctp_i2c_xmit(struct mctp_i2c_dev *midev, struct sk_buff *skb)
+ 	msg.len = 2 + hdr->byte_count + 1;
+ 	msg.addr = hdr->dest_slave >> 1;
+ 
+-	printk(KERN_DEBUG "mctp-i2c tx: dst=0x%02x src=0x%02x cmd=0x%02x bytes=%u len=%d\n",
+-	       hdr->dest_slave >> 1, hdr->source_slave >> 1,
+-	       hdr->command, hdr->byte_count, msg.len);
++	pr_debug("mctp-i2c tx: dst=0x%02x src=0x%02x cmd=0x%02x bytes=%u len=%d\n",
++		 hdr->dest_slave >> 1, hdr->source_slave >> 1,
++		 hdr->command, hdr->byte_count, msg.len);
+ 
+-	print_hex_dump(KERN_DEBUG, "mctp-i2c tx: ", DUMP_PREFIX_NONE, 16, 1,
+-		       msg.buf, msg.len, false);
++	print_hex_dump_debug("mctp-i2c tx: ", DUMP_PREFIX_NONE, 16, 1,
++			     msg.buf, msg.len, false);
+ 
+ 	switch (fs) {
+ 	case MCTP_I2C_TX_FLOW_NONE:
+-- 
+2.25.1
+
