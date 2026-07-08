@@ -1,0 +1,35 @@
+From 7a5c03e0dcd3b640ca46736b0211b282452805a4 Mon Sep 17 00:00:00 2001
+From: Hiren Mehta <hiren.mehta@amd.com>
+Date: Tue, 7 Jul 2026 18:07:29 -0700
+Subject: arm64/dts/amd/salina: fix and rename pentrustfw partition labels 
+
+Fix flash partition label for a35 pentrustfw1 and rename pentrustfw
+partition labels for consistency.
+
+Signed-off-by: Hiren Mehta <hiren.mehta@amd.com>
+---
+ arch/arm64/boot/dts/amd/salina-n1-flash-parts.dtsi | 4 ++--
+ 1 file changed, 2 insertions(+), 2 deletions(-)
+
+diff --git a/arch/arm64/boot/dts/amd/salina-n1-flash-parts.dtsi b/arch/arm64/boot/dts/amd/salina-n1-flash-parts.dtsi
+index 2bd80171c923..798255675b06 100644
+--- a/arch/arm64/boot/dts/amd/salina-n1-flash-parts.dtsi
++++ b/arch/arm64/boot/dts/amd/salina-n1-flash-parts.dtsi
+@@ -11,12 +11,12 @@ partitions {
+ 
+ 		/* DPU 256MB Layout Partitions */
+ 		partition@40000 {
+-			label = "a35_pentrustfw0";
++			label = "pentrustfw0";
+ 			reg = <0x00040000 0x00020000>;
+ 		};
+ 
+ 		partition@60000 {
+-			label = "a35_pentrustfw0";
++			label = "pentrustfw1";
+ 			reg = <0x00060000 0x00020000>;
+ 		};
+ 
+-- 
+2.25.1
+
