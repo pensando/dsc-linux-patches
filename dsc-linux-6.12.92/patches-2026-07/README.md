@@ -162,5 +162,11 @@ arm64: amd: add dtb Makefile entries and Pensando defconfigs
 Add the arch/arm64/boot/dts/amd Makefile dtb targets and the Elba,
 Giglio and Salina defconfigs, including the gold and HAPS variants.
 ```
-</content>
-</invoke>
+**0021-soc-pensando-bsm-add-read-only-access-to-A35-BSM-from-N1.patch**<br>
+```
+soc/pensando/bsm: add read-only access to A35 BSM from N1
+
+Mark the A35 BSM (bsm_a35) as read-only in the device tree so that
+N1 Linux can read A35 BSM fields but cannot modify them. A35 retains
+sole ownership of its BSM state. The N1 BSM remains read-writable.
+```
