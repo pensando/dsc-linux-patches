@@ -1,0 +1,69 @@
+From 1cda64c56ed40704e88423f486cbae088e8b2f17 Mon Sep 17 00:00:00 2001
+From: Hiren Mehta <hiren.mehta@amd.com>
+Date: Wed, 8 Jul 2026 15:47:29 -0700
+Subject: [PATCH 21/21] soc/pensando/bsm: add read-only access to A35 BSM from N1
+
+Mark the A35 BSM (bsm_a35) as read-only in the device tree so that
+N1 Linux can read A35 BSM fields but cannot modify them. A35 retains
+sole ownership of its BSM state. The N1 BSM remains read-writable.
+
+Signed-off-by: Hiren Mehta <hiren.mehta@amd.com>
+---
+ arch/arm64/boot/dts/amd/salina-asic.dtsi | 1 +
+ drivers/soc/pensando/cap_bsm.c           | 7 ++++++-
+ 2 files changed, 7 insertions(+), 1 deletion(-)
+
+diff --git a/arch/arm64/boot/dts/amd/salina-asic.dtsi b/arch/arm64/boot/dts/amd/salina-asic.dtsi
+index b67e5030574a..f11bf1b8d1ba 100644
+--- a/arch/arm64/boot/dts/amd/salina-asic.dtsi
++++ b/arch/arm64/boot/dts/amd/salina-asic.dtsi
+@@ -382,6 +382,7 @@ bsm: bsm@6100020c {
+ 		bsm_a35: bsm_a35@61000200 {
+ 			compatible = "pensando,bsm";
+ 			reg = <0x0 0x61000200 0x0 0x4>;
++			read-only;
+ 		};
+ 
+ 		panic: panicdump@0 {
+diff --git a/drivers/soc/pensando/cap_bsm.c b/drivers/soc/pensando/cap_bsm.c
+index cd76902e506a..96804f22c714 100644
+--- a/drivers/soc/pensando/cap_bsm.c
++++ b/drivers/soc/pensando/cap_bsm.c
+@@ -15,6 +15,7 @@ struct bsm {
+ 	void __iomem *base;
+ 	resource_size_t phys;
+ 	uint32_t val;
++	bool read_only;
+ };
+ 
+ #define BSM_MAX_INSTANCES 4
+@@ -60,6 +61,9 @@ static ssize_t success_store(struct device *dev,
+ 	struct bsm *b = dev_get_drvdata(dev);
+ 	long val;
+ 
++	if (b->read_only)
++		return -EPERM;
++
+ 	if (kstrtoul(buf, 0, &val) < 0)
+ 		return -EINVAL;
+ 	if (val) {
+@@ -173,6 +177,7 @@ static int __init cap_bsm_init(void)
+ 
+ 		b = &bsm_instances[bsm_count];
+ 		b->phys = res.start;
++		b->read_only = of_property_read_bool(np, "read-only");
+ 		b->base = ioremap(res.start, resource_size(&res));
+ 		if (!b->base) {
+ 			pr_err("bsm: failed to map register for %s\n", np->name);
+@@ -181,7 +186,7 @@ static int __init cap_bsm_init(void)
+ 
+ 		b->val = readl(b->base);
+ #ifdef CONFIG_PENSANDO_SOC_BSM_ENABLE
+-		if (b->val & (1 << BSM_AUTOBOOT_LSB)) {
++		if (!b->read_only && (b->val & (1 << BSM_AUTOBOOT_LSB))) {
+ 			b->val |= 1 << BSM_RUNNING_LSB;
+ 			writel(b->val, b->base);
+ 		}
+-- 
+2.25.1
+
