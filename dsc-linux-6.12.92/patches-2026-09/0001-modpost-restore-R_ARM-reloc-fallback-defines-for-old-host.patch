@@ -1,0 +1,60 @@
+From 57fd3b6b0337572ad5c07e5545db9bb6eab4f17c Mon Sep 17 00:00:00 2001
+From: Rahul Shekhar <40581610+rahshekh@users.noreply.github.com>
+Date: Thu, 3 Sep 2026 15:21:10 -0700
+Subject: [PATCH] modpost: restore R_ARM_* reloc fallback defines for old host
+ elf.h (#33)
+
+The 6.9 modpost refactor dropped the #ifndef R_ARM_* fallbacks. Our
+Buildroot host toolchain builds HOSTCC with -isystem host/include, whose
+elf.h predates these ARM relocation constants, breaking the modpost host
+build. Re-add the guarded defines (no-op where elf.h already defines them).
+
+Signed-off-by: Brad Larson <bradley.larson@amd.com>
+Signed-off-by: rahshekh <rahulshekhar@pensando.io>
+Co-authored-by: Brad Larson <bradley.larson@amd.com>
+---
+ scripts/mod/modpost.c | 28 ++++++++++++++++++++++++++++
+ 1 file changed, 28 insertions(+)
+
+diff --git a/scripts/mod/modpost.c b/scripts/mod/modpost.c
+index 07e8a4eb71d0..1ff207338163 100644
+--- a/scripts/mod/modpost.c
++++ b/scripts/mod/modpost.c
+@@ -1162,6 +1162,34 @@ static Elf_Addr addend_386_rel(uint32_t *location, unsigned int r_type)
+ 	return (Elf_Addr)(-1);
+ }
+ 
++#ifndef R_ARM_CALL
++#define R_ARM_CALL		28
++#endif
++#ifndef R_ARM_JUMP24
++#define R_ARM_JUMP24		29
++#endif
++#ifndef	R_ARM_THM_CALL
++#define	R_ARM_THM_CALL		10
++#endif
++#ifndef	R_ARM_THM_JUMP24
++#define	R_ARM_THM_JUMP24	30
++#endif
++#ifndef R_ARM_MOVW_ABS_NC
++#define R_ARM_MOVW_ABS_NC	43
++#endif
++#ifndef R_ARM_MOVT_ABS
++#define R_ARM_MOVT_ABS		44
++#endif
++#ifndef R_ARM_THM_MOVW_ABS_NC
++#define R_ARM_THM_MOVW_ABS_NC	47
++#endif
++#ifndef R_ARM_THM_MOVT_ABS
++#define R_ARM_THM_MOVT_ABS	48
++#endif
++#ifndef	R_ARM_THM_JUMP19
++#define	R_ARM_THM_JUMP19	51
++#endif
++
+ static int32_t sign_extend32(int32_t value, int index)
+ {
+ 	uint8_t shift = 31 - index;
+-- 
+2.25.1
+

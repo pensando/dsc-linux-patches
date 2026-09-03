@@ -1,0 +1,59 @@
+From e55a38ebb4aee8cc141a51bcb122fb1fa8d1ffba Mon Sep 17 00:00:00 2001
+From: Rahul Shekhar <40581610+rahshekh@users.noreply.github.com>
+Date: Thu, 3 Sep 2026 15:29:57 -0700
+Subject: [PATCH] mtd: spi-nor: gigadevice: add support for GD55LF02GF (#34)
+
+Add flash entry for GigaDevice GD55LF02GF (JEDEC ID 0xC8631C), a 2Gbit
+(256MB) uniform-sector dual/quad SPI NOR flash.
+
+The device has:
+- 4096 x 64KB blocks with 4KB subsector erase on the top and bottom blocks
+- Native 4-byte opcode support required for full address space access
+- BP[4:0] + CMP block protection bits
+- QE at SR2 bit 1 (S9), hardwired to 1 by default but managed via the
+  standard sr2_bit1 quad_enable method
+
+Signed-off-by: rahshekh <rahulshekhar@pensando.io>
+---
+ drivers/mtd/spi-nor/gigadevice.c | 18 ++++++++++++++++++
+ 1 file changed, 18 insertions(+)
+
+diff --git a/drivers/mtd/spi-nor/gigadevice.c b/drivers/mtd/spi-nor/gigadevice.c
+index ef1edd0add70..caa52658c2dd 100644
+--- a/drivers/mtd/spi-nor/gigadevice.c
++++ b/drivers/mtd/spi-nor/gigadevice.c
+@@ -33,6 +33,16 @@ static const struct spi_nor_fixups gd25q256_fixups = {
+ 	.post_bfpt = gd25q256_post_bfpt,
+ };
+ 
++static void gd55lf02gf_default_init(struct spi_nor *nor)
++{
++	/* QE is at SR2 bit 1 (S9); default is QE=1 (permanent) */
++	nor->params->quad_enable = spi_nor_sr2_bit1_quad_enable;
++}
++
++static const struct spi_nor_fixups gd55lf02gf_fixups = {
++	.default_init = gd55lf02gf_default_init,
++};
++
+ static const struct flash_info gigadevice_nor_parts[] = {
+ 	{
+ 		.id = SNOR_ID(0xc8, 0x40, 0x15),
+@@ -82,6 +92,14 @@ static const struct flash_info gigadevice_nor_parts[] = {
+ 		.size = SZ_16M,
+ 		.flags = SPI_NOR_HAS_LOCK | SPI_NOR_HAS_TB,
+ 		.no_sfdp_flags = SECT_4K | SPI_NOR_DUAL_READ | SPI_NOR_QUAD_READ,
++	}, {
++		.id = SNOR_ID(0xc8, 0x63, 0x1c),
++		.name = "gd55lf02gf",
++		.size = SZ_256M,
++		.flags = SPI_NOR_HAS_LOCK | SPI_NOR_HAS_TB,
++		.no_sfdp_flags = SECT_4K | SPI_NOR_DUAL_READ | SPI_NOR_QUAD_READ,
++		.fixup_flags = SPI_NOR_4B_OPCODES,
++		.fixups = &gd55lf02gf_fixups,
+ 	},
+ };
+ 
+-- 
+2.25.1
+

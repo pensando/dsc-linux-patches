@@ -1,0 +1,48 @@
+From a3e438ecda412b51dd4be7f45514de6be7efe85b Mon Sep 17 00:00:00 2001
+From: Rahul Shekhar <40581610+rahshekh@users.noreply.github.com>
+Date: Thu, 3 Sep 2026 16:06:20 -0700
+Subject: [PATCH] arm64: dts: amd: ubootenv and a35 gold uboot flash partition
+ fix. (#37)
+
+Remove a35 prefix from a35 gold and main ubootenv partitions as they will be
+shared by both A35 and N1. Also, fix gold uboot partition size.
+
+Signed-off-by: rahshekh <rahulshekhar@pensando.io>
+---
+ arch/arm64/boot/dts/amd/salina-n1-flash-parts.dtsi | 6 +++---
+ 1 file changed, 3 insertions(+), 3 deletions(-)
+
+diff --git a/arch/arm64/boot/dts/amd/salina-n1-flash-parts.dtsi b/arch/arm64/boot/dts/amd/salina-n1-flash-parts.dtsi
+index 798255675b06..d0f8d7ba9d85 100644
+--- a/arch/arm64/boot/dts/amd/salina-n1-flash-parts.dtsi
++++ b/arch/arm64/boot/dts/amd/salina-n1-flash-parts.dtsi
+@@ -81,7 +81,7 @@ partition@6350000 {
+ 		};
+ 
+ 		partition@6400000 {
+-			label = "a35_gold_ubootenv";
++			label = "gold_ubootenv";
+ 			reg = <0x06400000 0x00010000>;
+ 		};
+ 
+@@ -97,7 +97,7 @@ partition@7000000 {
+ 
+ 		partition@7800000 {
+ 			label = "a35_golduboot";
+-			reg = <0x07800000 0x07c00000>;
++			reg = <0x07800000 0x00400000>;
+ 		};
+ 
+ 		partition@7c00000 {
+@@ -106,7 +106,7 @@ partition@7c00000 {
+ 		};
+ 
+ 		partition@7fe0000 {
+-			label = "a35_ubootenv";
++			label = "ubootenv";
+ 			reg = <0x07fe0000 0x00010000>;
+ 		};
+ 
+-- 
+2.25.1
+
