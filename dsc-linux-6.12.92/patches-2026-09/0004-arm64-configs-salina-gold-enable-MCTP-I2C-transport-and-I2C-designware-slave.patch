@@ -1,0 +1,35 @@
+From 485d6c138bdceb91a32abf1828139014cfa31216 Mon Sep 17 00:00:00 2001
+From: Rahul Shekhar <40581610+rahshekh@users.noreply.github.com>
+Date: Thu, 3 Sep 2026 15:45:37 -0700
+Subject: [PATCH] arm64: configs: salina_gold: enable MCTP I2C transport and
+ I2C designware slave (#622) (#36)
+
+Signed-off-by: rahshekh <rahulshekhar@pensando.io>
+---
+ arch/arm64/configs/salina_gold_defconfig | 3 +++
+ 1 file changed, 3 insertions(+)
+
+diff --git a/arch/arm64/configs/salina_gold_defconfig b/arch/arm64/configs/salina_gold_defconfig
+index 4675e9decc6e..ace4c99a23e8 100644
+--- a/arch/arm64/configs/salina_gold_defconfig
++++ b/arch/arm64/configs/salina_gold_defconfig
+@@ -192,6 +192,7 @@ CONFIG_STMMAC_ETH=y
+ # CONFIG_NET_VENDOR_VIA is not set
+ # CONFIG_NET_VENDOR_WIZNET is not set
+ # CONFIG_NET_VENDOR_XILINX is not set
++CONFIG_MCTP_TRANSPORT_I2C=y
+ # CONFIG_WLAN is not set
+ # CONFIG_INPUT_KEYBOARD is not set
+ # CONFIG_INPUT_MOUSE is not set
+@@ -206,6 +207,8 @@ CONFIG_SERIAL_OF_PLATFORM=y
+ # CONFIG_DEVPORT is not set
+ CONFIG_I2C=y
+ CONFIG_I2C_CHARDEV=y
++CONFIG_I2C_DESIGNWARE_CORE=y
++CONFIG_I2C_DESIGNWARE_SLAVE=y
+ CONFIG_I2C_RD1173=y
+ CONFIG_SPI=y
+ CONFIG_SPI_CADENCE_QUADSPI=y
+-- 
+2.25.1
+

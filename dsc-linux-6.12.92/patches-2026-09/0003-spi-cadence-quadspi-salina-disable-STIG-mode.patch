@@ -1,0 +1,25 @@
+From 35ae50fcfc4e821cbad0768fa824d35c3350f078 Mon Sep 17 00:00:00 2001
+From: Rahul Shekhar <40581610+rahshekh@users.noreply.github.com>
+Date: Thu, 3 Sep 2026 15:36:32 -0700
+Subject: [PATCH] spi: cadence-quadspi: salina: disable STIG mode (#624) (#35)
+
+Signed-off-by: rahshekh <rahulshekhar@pensando.io>
+---
+ drivers/spi/spi-cadence-quadspi.c | 1 +
+ 1 file changed, 1 insertion(+)
+
+diff --git a/drivers/spi/spi-cadence-quadspi.c b/drivers/spi/spi-cadence-quadspi.c
+index c65b5dbf92b6..980239d76ced 100644
+--- a/drivers/spi/spi-cadence-quadspi.c
++++ b/drivers/spi/spi-cadence-quadspi.c
+@@ -2215,6 +2215,7 @@ static const struct cqspi_driver_platdata pensando_elba_qspi = {
+ static const struct cqspi_driver_platdata pensando_salina_qspi = {
+ 	.quirks = CQSPI_NEEDS_APB_AHB_HAZARD_WAR |
+ 		  CQSPI_NEEDS_INDIRECT_WR_POLL_WAR |
++		  CQSPI_DISABLE_STIG_MODE |
+ 		  CQSPI_DISABLE_DAC_MODE,
+ };
+ 
+-- 
+2.25.1
+
