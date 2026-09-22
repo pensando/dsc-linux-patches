@@ -47,3 +47,11 @@ arm64: dts: amd: ubootenv and a35 gold uboot flash partition
 Remove a35 prefix from a35 gold and main ubootenv partitions as they will
 be shared by both A35 and N1. Also, fix gold uboot partition size.
 ```
+**0006-soc-pensando-select-ARCH_HAS_DMA_OPS.patch**<br>
+```
+soc: pensando: select ARCH_HAS_DMA_OPS
+
+Fix the performance drop due to the Elba/Salina SoC 64MB bounce buffer
+not being used. The DMA_OPS Kconfig option was replaced by
+ARCH_HAS_DMA_OPS in Linux 6.11.
+```
