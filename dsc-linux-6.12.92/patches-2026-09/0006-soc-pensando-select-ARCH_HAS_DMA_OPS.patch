@@ -1,0 +1,40 @@
+From be2b241360b6afecb8b46c67f9e36da256cdb33d Mon Sep 17 00:00:00 2001
+From: Brad Larson <bradley.larson@amd.com>
+Date: Fri, 18 Sep 2026 16:21:57 -0700
+Subject: [PATCH] soc: pensando: select ARCH_HAS_DMA_OPS
+
+Fix the performance drop due to the Elba/Salina SoC 64MB
+bounce buffer not being used.  The DMA_OPS Kconfig option
+was replaced by ARCH_HAS_DMA_OPS in Linux 6.11.
+
+Signed-off-by: Brad Larson <bradley.larson@amd.com>
+Signed-off-by: rahshekh <rahulshekhar@pensando.io>
+---
+ drivers/soc/pensando/Kconfig | 4 ++--
+ 1 file changed, 2 insertions(+), 2 deletions(-)
+
+diff --git a/drivers/soc/pensando/Kconfig b/drivers/soc/pensando/Kconfig
+index 8d5f9f6b2662..3ff181eb0b79 100644
+--- a/drivers/soc/pensando/Kconfig
++++ b/drivers/soc/pensando/Kconfig
+@@ -13,7 +13,7 @@ choice
+ 
+ config ARCH_PENSANDO_ELBA_SOC
+ 	bool "Elba SoC"
+-	select DMA_OPS
++	select ARCH_HAS_DMA_OPS
+ 	select REGMAP_SPI
+ 	help
+ 	  Support for the AMD Pensando Elba SoC, a multi-core ARMv8
+@@ -31,7 +31,7 @@ config ARCH_PENSANDO_GIGLIO_SOC
+ 
+ config ARCH_PENSANDO_SALINA_SOC
+ 	bool "Salina SoC"
+-	select DMA_OPS
++	select ARCH_HAS_DMA_OPS
+ 	help
+ 	  Support for the AMD Pensando Salina SoC, a multi-core ARMv8
+ 	  data-processing unit (DPU) with four DDR5 memory controllers.
+-- 
+2.25.1
+
