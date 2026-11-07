@@ -1,0 +1,3075 @@
+From 311717cb1a3469e195a1374f6fe8dc082b6071f6 Mon Sep 17 00:00:00 2001
+From: Brad Larson <bradley.larson@amd.com>
+Date: Tue, 3 Nov 2026 11:33:59 -0800
+Subject: [PATCH] arm64: amd: add Xen dom0less support for Elba and Salina
+
+Add device trees and defconfigs to boot AMD Pensando Elba and Salina
+DSCs under the Xen hypervisor in a dom0less configuration with two
+guests: a smartnic domain owning the control-plane peripherals and a
+hostnic domain serving the PCIe host interface.
+
+Document the bindings the new DTs use: xen,domain, xen,cpupool and
+multiboot,module (Xen's dom0less boot ABI, described in the Xen tree
+at docs/misc/arm/device-tree/booting.txt), and oracle,captun. Add the
+multiboot and oracle vendor prefixes.
+
+Signed-off-by: Brad Larson <bradley.larson@amd.com>
+Signed-off-by: rahshekh <rahulshekhar@pensando.io>
+---
+ .../bindings/misc/oracle,captun.yaml          |  66 ++
+ .../devicetree/bindings/vendor-prefixes.yaml  |   4 +
+ .../bindings/xen/multiboot,module.yaml        |  66 ++
+ .../devicetree/bindings/xen/xen,cpupool.yaml  |  69 ++
+ .../devicetree/bindings/xen/xen,domain.yaml   | 137 ++++
+ MAINTAINERS                                   |   6 +
+ arch/arm64/boot/dts/amd/Makefile              |  16 +-
+ arch/arm64/boot/dts/amd/elba-asic-hostnic.dts | 214 +++++++
+ .../arm64/boot/dts/amd/elba-asic-smartnic.dts | 600 +++++++++++++++++
+ arch/arm64/boot/dts/amd/elba-asic-xen.dts     | 104 +++
+ .../boot/dts/amd/elba-flash-parts-xen.dtsi    | 108 ++++
+ .../boot/dts/amd/salina-asic-hostnic.dts      | 129 ++++
+ .../boot/dts/amd/salina-asic-smartnic.dts     | 601 ++++++++++++++++++
+ arch/arm64/boot/dts/amd/salina-asic-xen.dts   | 200 ++++++
+ arch/arm64/configs/elba_xen_defconfig         | 256 ++++++++
+ arch/arm64/configs/salina_xen_defconfig       | 322 ++++++++++
+ 16 files changed, 2897 insertions(+), 1 deletion(-)
+ create mode 100644 Documentation/devicetree/bindings/misc/oracle,captun.yaml
+ create mode 100644 Documentation/devicetree/bindings/xen/multiboot,module.yaml
+ create mode 100644 Documentation/devicetree/bindings/xen/xen,cpupool.yaml
+ create mode 100644 Documentation/devicetree/bindings/xen/xen,domain.yaml
+ create mode 100644 arch/arm64/boot/dts/amd/elba-asic-hostnic.dts
+ create mode 100644 arch/arm64/boot/dts/amd/elba-asic-smartnic.dts
+ create mode 100644 arch/arm64/boot/dts/amd/elba-asic-xen.dts
+ create mode 100644 arch/arm64/boot/dts/amd/elba-flash-parts-xen.dtsi
+ create mode 100644 arch/arm64/boot/dts/amd/salina-asic-hostnic.dts
+ create mode 100644 arch/arm64/boot/dts/amd/salina-asic-smartnic.dts
+ create mode 100644 arch/arm64/boot/dts/amd/salina-asic-xen.dts
+ create mode 100644 arch/arm64/configs/elba_xen_defconfig
+ create mode 100644 arch/arm64/configs/salina_xen_defconfig
+
+diff --git a/Documentation/devicetree/bindings/misc/oracle,captun.yaml b/Documentation/devicetree/bindings/misc/oracle,captun.yaml
+new file mode 100644
+index 000000000000..5edf0636d9f4
+--- /dev/null
++++ b/Documentation/devicetree/bindings/misc/oracle,captun.yaml
+@@ -0,0 +1,66 @@
++# SPDX-License-Identifier: (GPL-2.0 OR BSD-2-Clause)
++%YAML 1.2
++---
++$id: http://devicetree.org/schemas/misc/oracle,captun.yaml#
++$schema: http://devicetree.org/meta-schemas/core.yaml#
++
++title: Oracle captun shared-memory tunnel endpoint
++
++maintainers:
++  - Brad Larson <blarson@amd.com>
++
++description: |
++  One endpoint of a point-to-point IP tunnel carried over a shared memory
++  window between two Xen guests on an AMD Pensando DSC. The captun daemon
++  reads this node from /sys/firmware/devicetree/base/passthrough/captun and
++  creates a tun interface with the given addresses. The property names are
++  part of the captun ABI.
++
++properties:
++  compatible:
++    const: oracle,captun
++
++  shared_mem:
++    $ref: /schemas/types.yaml#/definitions/uint64
++    description: Physical address of the shared memory window.
++
++  shared_size:
++    $ref: /schemas/types.yaml#/definitions/uint64
++    description: Size of the shared memory window in bytes.
++
++  local_addr:
++    $ref: /schemas/types.yaml#/definitions/string
++    description: IPv4 address of this end of the tunnel.
++
++  endpoint_addr:
++    $ref: /schemas/types.yaml#/definitions/string
++    description: IPv4 address of the peer end of the tunnel.
++
++  initialize:
++    $ref: /schemas/types.yaml#/definitions/string
++    const: "yes"
++    description:
++      This end initializes the shared memory window. Set on exactly one of
++      the two endpoints.
++
++required:
++  - compatible
++  - shared_mem
++  - shared_size
++  - local_addr
++  - endpoint_addr
++
++additionalProperties: false
++
++examples:
++  - |
++    captun {
++        compatible = "oracle,captun";
++        shared_mem = <0x0 0xc5ff7000>;
++        shared_size = <0x0 0x8000>;
++        endpoint_addr = "169.254.1.100";
++        local_addr = "169.254.1.200";
++        initialize = "yes";
++    };
++
++...
+diff --git a/Documentation/devicetree/bindings/vendor-prefixes.yaml b/Documentation/devicetree/bindings/vendor-prefixes.yaml
+index e06a025c64f2..dcbd3470cdf6 100644
+--- a/Documentation/devicetree/bindings/vendor-prefixes.yaml
++++ b/Documentation/devicetree/bindings/vendor-prefixes.yaml
+@@ -1000,6 +1000,8 @@ patternProperties:
+     description: Imagination Technologies Ltd. (formerly MIPS Technologies Inc.)
+   "^multi-inno,.*":
+     description: Multi-Inno Technology Co.,Ltd
++  "^multiboot,.*":
++    description: Multiboot boot modules (Xen hypervisor dom0less boot)
+   "^mundoreader,.*":
+     description: Mundo Reader S.L.
+   "^murata,.*":
+@@ -1108,6 +1110,8 @@ patternProperties:
+     description: OpenWrt
+   "^option,.*":
+     description: Option NV
++  "^oracle,.*":
++    description: Oracle Corporation
+   "^oranth,.*":
+     description: Shenzhen Oranth Technology Co., Ltd.
+   "^ORCL,.*":
+diff --git a/Documentation/devicetree/bindings/xen/multiboot,module.yaml b/Documentation/devicetree/bindings/xen/multiboot,module.yaml
+new file mode 100644
+index 000000000000..4c92d0f35d94
+--- /dev/null
++++ b/Documentation/devicetree/bindings/xen/multiboot,module.yaml
+@@ -0,0 +1,66 @@
++# SPDX-License-Identifier: (GPL-2.0 OR BSD-2-Clause)
++%YAML 1.2
++---
++$id: http://devicetree.org/schemas/xen/multiboot,module.yaml#
++$schema: http://devicetree.org/meta-schemas/core.yaml#
++
++title: Xen multiboot boot module
++
++maintainers:
++  - Brad Larson <blarson@amd.com>
++
++description: |
++  A boot module (kernel, ramdisk or partial device tree) already loaded in
++  memory by the bootloader, described to the Xen hypervisor. Modules appear
++  under /chosen for dom0 or under a xen,domain node for dom0less guests.
++
++  The authoritative description is docs/misc/arm/device-tree/booting.txt in
++  the Xen source tree.
++
++properties:
++  compatible:
++    oneOf:
++      - items:
++          - enum:
++              - multiboot,kernel
++              - multiboot,ramdisk
++              - multiboot,device-tree
++          - const: multiboot,module
++      - const: multiboot,module
++
++  reg:
++    maxItems: 1
++    description: Physical address and size of the module in RAM.
++
++  bootargs:
++    $ref: /schemas/types.yaml#/definitions/string
++    description: Command line for a kernel module.
++
++  xen,uefi-binary:
++    $ref: /schemas/types.yaml#/definitions/string
++    description: File name loaded by the Xen UEFI stub (UEFI boot only).
++
++required:
++  - compatible
++
++additionalProperties: false
++
++examples:
++  - |
++    domU0 {
++        #address-cells = <2>;
++        #size-cells = <2>;
++
++        module@87000000 {
++            compatible = "multiboot,kernel", "multiboot,module";
++            reg = <0x0 0x87000000 0x0 0x02000000>;
++            bootargs = "console=ttyAMA0";
++        };
++
++        module@85000000 {
++            compatible = "multiboot,device-tree", "multiboot,module";
++            reg = <0x0 0x85000000 0x0 0x00010000>;
++        };
++    };
++
++...
+diff --git a/Documentation/devicetree/bindings/xen/xen,cpupool.yaml b/Documentation/devicetree/bindings/xen/xen,cpupool.yaml
+new file mode 100644
+index 000000000000..301dcaffcb33
+--- /dev/null
++++ b/Documentation/devicetree/bindings/xen/xen,cpupool.yaml
+@@ -0,0 +1,69 @@
++# SPDX-License-Identifier: (GPL-2.0 OR BSD-2-Clause)
++%YAML 1.2
++---
++$id: http://devicetree.org/schemas/xen/xen,cpupool.yaml#
++$schema: http://devicetree.org/meta-schemas/core.yaml#
++
++title: Xen boot-time cpupool
++
++maintainers:
++  - Brad Larson <blarson@amd.com>
++
++description: |
++  A node under /chosen of the device tree passed to the Xen hypervisor that
++  creates a cpupool at boot. Domains are placed in a pool with the
++  domain-cpupool property of a xen,domain node.
++
++  The authoritative description is docs/misc/arm/device-tree/cpupools.txt in
++  the Xen source tree.
++
++properties:
++  compatible:
++    const: xen,cpupool
++
++  cpupool-cpus:
++    $ref: /schemas/types.yaml#/definitions/phandle-array
++    minItems: 1
++    items:
++      maxItems: 1
++    description: Phandles of the CPU nodes assigned to the pool.
++
++  cpupool-sched:
++    $ref: /schemas/types.yaml#/definitions/string
++    enum: [credit, credit2, rtds, arinc653, "null"]
++    description: Scheduler for the pool. Defaults to the Xen default scheduler.
++
++required:
++  - compatible
++  - cpupool-cpus
++
++additionalProperties: false
++
++examples:
++  - |
++    cpus {
++        #address-cells = <1>;
++        #size-cells = <0>;
++
++        cpu2: cpu@200 {
++            compatible = "arm,neoverse-n1";
++            device_type = "cpu";
++            reg = <0x200>;
++            enable-method = "psci";
++        };
++
++        cpu3: cpu@300 {
++            compatible = "arm,neoverse-n1";
++            device_type = "cpu";
++            reg = <0x300>;
++            enable-method = "psci";
++        };
++    };
++
++    cpupool {
++        compatible = "xen,cpupool";
++        cpupool-cpus = <&cpu2 &cpu3>;
++        cpupool-sched = "null";
++    };
++
++...
+diff --git a/Documentation/devicetree/bindings/xen/xen,domain.yaml b/Documentation/devicetree/bindings/xen/xen,domain.yaml
+new file mode 100644
+index 000000000000..bba487d026d4
+--- /dev/null
++++ b/Documentation/devicetree/bindings/xen/xen,domain.yaml
+@@ -0,0 +1,137 @@
++# SPDX-License-Identifier: (GPL-2.0 OR BSD-2-Clause)
++%YAML 1.2
++---
++$id: http://devicetree.org/schemas/xen/xen,domain.yaml#
++$schema: http://devicetree.org/meta-schemas/core.yaml#
++
++title: Xen dom0less domain
++
++maintainers:
++  - Brad Larson <blarson@amd.com>
++
++description: |
++  A node under /chosen of the device tree passed to the Xen hypervisor that
++  describes a guest domain for Xen to create at boot (dom0less). The node is
++  consumed by Xen and is not passed to any guest. Child nodes describe the
++  boot modules (kernel, ramdisk, partial device tree) loaded for the domain.
++
++  The authoritative description is docs/misc/arm/device-tree/booting.txt in
++  the Xen source tree.
++
++properties:
++  compatible:
++    const: xen,domain
++
++  "#address-cells":
++    const: 2
++
++  "#size-cells":
++    const: 2
++
++  memory:
++    $ref: /schemas/types.yaml#/definitions/uint64
++    description: Amount of guest RAM in KiB.
++
++  cpus:
++    description:
++      Number of vCPUs (a single cell, unlike the phandle-array cpus property
++      of other bindings).
++
++  capabilities:
++    $ref: /schemas/types.yaml#/definitions/uint32
++    description: Bit field of domain capabilities for a disaggregated system.
++
++  vpl011:
++    type: boolean
++    description: Provide a virtual PL011 UART to the guest.
++
++  nr_spis:
++    $ref: /schemas/types.yaml#/definitions/uint32
++    description: Number of SPIs to allocate for the domain.
++
++  direct-map:
++    type: boolean
++    description:
++      Map guest memory 1:1 (guest physical == host physical). Requires
++      xen,static-mem.
++
++  domain-cpupool:
++    $ref: /schemas/types.yaml#/definitions/phandle
++    description: The xen,cpupool node the domain is started in.
++
++  xen,static-mem:
++    $ref: /schemas/types.yaml#/definitions/uint32-matrix
++    description:
++      Statically allocated guest memory as address/size pairs, sized by the
++      address and size cell counts of this node.
++
++  xen,enhanced:
++    $ref: /schemas/types.yaml#/definitions/string
++    enum: [enabled, legacy, disabled, no-xenstore]
++    description: Xen PV interfaces (grant table, xenstore) exposed to the guest.
++
++  passthrough:
++    $ref: /schemas/types.yaml#/definitions/string
++    enum: [enabled, disabled]
++    description: Whether IOMMU mappings are enabled for device passthrough.
++
++  vfru:
++    type: boolean
++    description: Provide the virtual FRU interface to the guest.
++
++  vsmc:
++    type: object
++    description:
++      Virtual SMC (secure monitor call) forwarding for the guest. Child
++      nodes, if present, list the SMC function IDs the guest may issue.
++
++    properties:
++      strict:
++        type: boolean
++        description: Only forward SMCs that match a listed function ID.
++
++    additionalProperties:
++      type: object
++      description: Allowed SMC function ID, with optional sub-function nodes.
++
++patternProperties:
++  "^(module|kernel|ramdisk|device-tree)[0-9]*(@[0-9a-f]+)?$":
++    type: object
++    description: Boot module, see multiboot,module.yaml.
++
++required:
++  - compatible
++  - "#address-cells"
++  - "#size-cells"
++
++additionalProperties: false
++
++examples:
++  - |
++    domU1 {
++        compatible = "xen,domain";
++        #address-cells = <2>;
++        #size-cells = <2>;
++        memory = <0x0 0x200000>;
++        cpus = <2>;
++        vpl011;
++        direct-map;
++        xen,static-mem = <0x82 0x00800000 0x0 0x80000000>;
++
++        vsmc {
++            strict;
++        };
++
++        module@90000000 {
++            compatible = "multiboot,kernel", "multiboot,module";
++            reg = <0x0 0x90000000 0x0 0x02000000>;
++            bootargs = "console=ttyAMA0";
++        };
++
++        ramdisk@871c000000 {
++            compatible = "multiboot,ramdisk", "multiboot,module";
++            reg = <0x87 0x1c000000 0x0 0x10000000>;
++        };
++    };
++
++...
+diff --git a/MAINTAINERS b/MAINTAINERS
+index d765c62c80ea..3b5de2794463 100644
+--- a/MAINTAINERS
++++ b/MAINTAINERS
+@@ -2062,7 +2062,13 @@ M:	Brad Larson <blarson@amd.com>
+ L:	linux-arm-kernel@lists.infradead.org (moderated for non-subscribers)
+ S:	Supported
+ F:	Documentation/devicetree/bindings/*/amd,pensando*
++F:	Documentation/devicetree/bindings/misc/oracle,captun.yaml
++F:	Documentation/devicetree/bindings/xen/multiboot,module.yaml
++F:	Documentation/devicetree/bindings/xen/xen,cpupool.yaml
++F:	Documentation/devicetree/bindings/xen/xen,domain.yaml
+ F:	arch/arm64/boot/dts/amd/elba*
++F:	arch/arm64/boot/dts/amd/giglio*
++F:	arch/arm64/boot/dts/amd/salina*
+ 
+ ARM/Amlogic Meson SoC CLOCK FRAMEWORK
+ M:	Neil Armstrong <neil.armstrong@linaro.org>
+diff --git a/arch/arm64/boot/dts/amd/Makefile b/arch/arm64/boot/dts/amd/Makefile
+index 001d6ce70878..e73ef862a8e3 100644
+--- a/arch/arm64/boot/dts/amd/Makefile
++++ b/arch/arm64/boot/dts/amd/Makefile
+@@ -3,7 +3,10 @@ dtb-$(CONFIG_ARCH_PENSANDO) += elba-asic.dtb \
+ 			       elba-asic-psci.dtb \
+ 			       elba-secure.dtb \
+ 			       elba-asic-psci-flash128.dtb \
+-			       elba-asic-flash128.dtb
++			       elba-asic-flash128.dtb \
++			       elba-asic-xen.dtb \
++			       elba-asic-smartnic.dtb \
++			       elba-asic-hostnic.dtb
+ dtb-$(CONFIG_ARCH_PENSANDO_GIGLIO_SOC) += giglio-asic.dtb \
+ 					  giglio-asic-psci.dtb \
+ 					  giglio-asic-psci-flash128.dtb \
+@@ -15,5 +18,16 @@ dtb-$(CONFIG_ARCH_PENSANDO_SALINA_SOC) += salina-asic.dtb \
+ 					  salina-haps-16core.dtb \
+ 					  salina-a35-haps.dtb \
+ 					  salina-asic-psci.dtb \
++					  salina-asic-xen.dtb \
++					  salina-asic-smartnic.dtb \
++					  salina-asic-hostnic.dtb \
+ 					  salina-secure.dtb
+ dtb-$(CONFIG_ARCH_SEATTLE) += amd-overdrive-rev-b0.dtb amd-overdrive-rev-b1.dtb
++
++# Xen dom0less guest fragments: msi-parent targets the vITS node that Xen
++# generates with the fixed phandle GUEST_PHANDLE_ITS (0xfdea), which cannot be
++# declared in the fragment (Xen rejects fragment phandles >= 65000).
++DTC_FLAGS_elba-asic-smartnic := -Wno-msi_parent_property
++DTC_FLAGS_elba-asic-hostnic := -Wno-msi_parent_property
++DTC_FLAGS_salina-asic-smartnic := -Wno-msi_parent_property
++DTC_FLAGS_salina-asic-hostnic := -Wno-msi_parent_property
+diff --git a/arch/arm64/boot/dts/amd/elba-asic-hostnic.dts b/arch/arm64/boot/dts/amd/elba-asic-hostnic.dts
+new file mode 100644
+index 000000000000..d195525d4e26
+--- /dev/null
++++ b/arch/arm64/boot/dts/amd/elba-asic-hostnic.dts
+@@ -0,0 +1,214 @@
++// SPDX-License-Identifier: GPL-2.0
++
++/dts-v1/;
++/* HostNIC */
++
++/ {
++	#address-cells = <2>;
++	#size-cells = <2>;
++
++	gic: gic {
++		/* Dummy gic node, only used for phandle reference.
++		 * Xen will populate real vGIC node.
++		 */
++		#interrupt-cells = <3>;
++		interrupt-controller;
++	};
++
++	reserved-memory {
++		#address-cells = <2>;
++		#size-cells = <2>;
++		ranges;
++
++		mnet_reserved: mnet_dma_region {
++			compatible = "shared-dma-pool";
++			no-map;
++			size = <0x0 0x6000000>;
++			alignment = <0x0 0x1000>;
++		};
++	};
++
++	passthrough {
++		compatible = "simple-bus";
++		ranges;
++		#address-cells = <2>;
++		#size-cells = <2>;
++		dma-coherent;
++
++		ahb_clk: oscillator0 {
++			compatible = "fixed-clock";
++			#clock-cells = <0>;
++			clock-frequency = <400000000>;
++		};
++
++		emmc_clk: oscillator2 {
++			compatible = "fixed-clock";
++			#clock-cells = <0>;
++			clock-frequency = <200000000>;
++		};
++
++		flash_clk: oscillator3 {
++			compatible = "fixed-clock";
++			#clock-cells = <0>;
++			clock-frequency = <400000000>;
++		};
++
++		ref_clk: oscillator4 {
++			compatible = "fixed-clock";
++			#clock-cells = <0>;
++			clock-frequency = <156250000>;
++		};
++
++		gmac_clk: oscillator5 {
++			compatible = "fixed-clock";
++			#clock-cells = <0>;
++			clock-frequency = <250000000>;
++		};
++
++		mnet0: mnet0 {
++			compatible = "pensando,mnet";
++			msi-parent = <0xfdea 0x0>;
++			memory-region = <&mnet_reserved>;
++		};
++
++		/*
++		 * Ranges to be made accessible in SoC for HostNIC.
++		 * Per memory layout the following range should be accessible:
++		 *
++		 * 0x20000000-0x2037FFFF  PCIe
++		 * 0x10000000-0x11FFFFFF  Doorbell                    # disjoint from SmartNIC
++		 * 0x60600000-0x60600FFF  Host Cache Invalidation RXDMA Register
++		 * 0x60701000-0x60701FFF  RXDMA Cache Invalidation Register
++		 * 0x60f01000-0x60F01FFF  P4I Cache Invalidation Register
++		 * 0x61701000-0x61701FFF  P4E Cache Invalidation Register
++		 * 0x12701000-0x12701FFF  TXDMA Cache Invalidation Register
++		 * 0x12a01000-0x12a01FFF  SXDMA Cache Invalidation Register
++		 * 0x0084400000-0x00bFFFFFFF DDR - Cache Coherent - Linux # disjoint from SmartNIC
++		 * 0x00C4000000-0x01FFFFFFFF DDR-DataPlane            # disjoint from SmartNIC
++		 * 0x0400000000-0x04003FFFFF DM                       # disjoint from SmartNIC
++		 * 0x1000000000-0x107FFFFFFF DDR-Bypass               # disjoint from SmartNIC
++		 * 0x1200000000-0x123FFFFFFF DDR-Hi                   # disjoint from SmartNIC
++		 * 0x1240000000-0x17FFFFFFFF DDR - Cache Coherent - Linux # disjoint from SmartNIC
++		 */
++		capmem {
++			compatible = "pensando,capmem";
++			pensando,capmem-fixed-ranges =
++				/*
++				 * Device register windows, split to exclude the physical
++				 * GIC block (GICD/ITS 0x800000, GICR 0xa00000, end 0xbfffff)
++				 * and GICC CPU interfaces at 0x60000000-0x60001fff.
++				 * Direct-mapping the GIC bypasses Xen's vGIC/vITS and
++				 * exposes host interrupt state to the guest.
++				 */
++				<0x0 0x200000  0x0 0x600000   0x4>,   /* 0x200000-0x7fffff (before GICD) */
++				<0x0 0xc00000  0x0 0x5f400000 0x4>,   /* 0xc00000-0x5fffffff (after GICR) */
++				<0x0 0x60002000 0x0 0xfffe000 0x4>,   /* 0x60002000-0x6fffffff (after GICC) */
++				/* Maps range 0x400000000-0x4003fffff as Device Memory */
++				<0x4 0x0 0x0 0x400000 0x4>;
++			pensando,capmem-ranges =
++				/* Maps 0x00c0000000-0x0c3ffffff  as Coherent */
++				<0x00000000 0xc0000000 0x00000000 0x04000000 0x00000001>,
++				/* Maps 0x00c4000000-0x1ffffffff as Non-coherent */
++				<0x00000000 0xc4000000 0x00000001 0x3c000000 0x00000000>,
++				/* Maps 0x1000000000-0x107fffffff as Bypass */
++				<0x00000010 0x00000000 0x00000000 0x80000000 0x00000002>,
++				/* Maps 0x1200000000-0x127fffffff as Non-coherent */
++				<0x00000012 0x00000000 0x00000000 0x80000000 0x00000000>;
++		};
++
++		uio_penmsi1@520000 {
++			compatible = "pensando,uio_penmsi1";
++			reg = <0x0 0x520000 0x0 0x10000>;
++			msi-parent = <0xfdea 0xa>; /* hardcoded ITS phandle, no &its label */
++			num-interrupts = <32>;
++			xen,reg = <0x0 0x520000 0x0 0x10000 0x0 0x520000>;
++			xen,path = "/soc/uio_penmsi1@520000";
++			xen,force-assign-without-iommu;
++		};
++
++		/* Group: pxc0_intr, pciemac, pcie, kpcimgr */
++		pxc0_intr: interrupt-controller@20102200 {
++			compatible = "pensando,soc-ictlr-csrintr";
++			interrupt-controller;
++			reg = <0x0 0x20102200 0x0 0x4>;
++			#interrupt-cells = <3>;
++			interrupt-parent = <&gic>;
++			interrupts = <0 17 4>;
++			interrupt-names = "pxc0_intr";
++			xen,reg = <0x0 0x20102000 0x0 0x1000 0x0 0x20102000>; /* 4k page */
++			xen,path = "/soc/interrupt-controller@20102200";
++			xen,force-assign-without-iommu;
++		};
++
++		/* pxc0_intr and pciemac@20102200 duplicate reg base (but different size) */
++		pciemac@20102200 {
++			#address-cells = <2>;
++			#size-cells = <2>;
++
++			compatible = "pensando,uio_pciemac";
++			register-type = "csr-interrupt";
++			interrupt-parent = <&pxc0_intr>;
++			interrupts = <0 0 4>;
++			reg = <0x0 0x20102200 0x0 0x10>;
++
++			enable_csr_paddr = <0x0 0x20102200 0x0 0x10>;
++			enable_mask = <(1 << 0)>;
++
++			/* same 4k page as pxc0_intr */
++			xen,reg = <0x0 0x20102000 0x0 0x1000 0x0 0x20102000>;
++			xen,path = "/soc/pciemac@20102200";
++			xen,force-assign-without-iommu;
++		};
++
++		/*
++		 * Caution: wdt0 (watchdog@1400), wdt1 (watchdog@1800),
++		 * wdt2 (watchdog@1c00) and pcie@307c2480 share a page.
++		 * Caution: bsm@307c2080, pcie@307c2480, sbus@307c24a8,
++		 * sbus@307c24b8 and sbus@307c24c8 share a page.
++		 */
++		pcie@307c2480 {
++			compatible = "pensando,pcie";
++			reg = <0x0 0x307c2480 0x0 0x4>,
++				  <0x0 0x1400 0x0 0x10>,
++				  <0x0 0x20000000 0x0 0x380000>;
++
++			xen,reg = <0x0 0x307c2000 0x0 0x1000 0x0 0x307c2000>, /* 4k page */
++				  <0x0 0x1000 0x0 0x1000 0x0 0x1000>, /* 4k page */
++				  <0x0 0x20000000 0x0 0x380000 0x0 0x20000000>;
++			xen,path = "/soc/pcie@307c2480";
++			xen,force-assign-without-iommu;
++		};
++
++		kpcimgr@20000000 {
++			compatible = "pensando,kpcimgr";
++			msi-parent = <0xfdea 0x1f>; /* hardcoded ITS phandle, no &its label */
++			shmem-index = <3>;
++			hwmem-index = <2>;
++			dynevq-index = <4>;
++			reg = <0x0 0x20000000 0x0 0x00380000>,
++				  <0x0 0x61800000 0x0 0x00101000>,
++				  <0x0 0xc4000000 0x0 0x01000000>,
++				  <0x0 0x0 0x0 0x02000000>,
++				  <0x0 0xc0000000 0x0 0x00800000>;
++
++			xen,reg = <0x0 0x20000000 0x0 0x00380000 0x0 0x20000000>,
++				  <0x0 0x61800000 0x0 0x00101000 0x0 0x61800000>,
++				  <0x0 0xc0000000 0x0 0x00800000 0x0 0xc0000000>;
++				  /* <0x0 0x0 0x0 0x02000000 0x0 0x0>; */
++				  /* Linux hangs with this last mapping enabled, due
++				   * to overlap with vPL011 mmio. This overlaps with
++				   * all the low peripherals!
++				   */
++			xen,path = "/soc/kpcimgr@20000000";
++			xen,force-assign-without-iommu;
++		};
++
++		captun {
++			compatible = "oracle,captun";
++			shared_mem = <0x0 0xc5ff7000>;
++			shared_size = <0x0 0x8000>;
++			endpoint_addr = "169.254.1.200";
++			local_addr = "169.254.1.100";
++		};
++	};
++};
+diff --git a/arch/arm64/boot/dts/amd/elba-asic-smartnic.dts b/arch/arm64/boot/dts/amd/elba-asic-smartnic.dts
+new file mode 100644
+index 000000000000..7257ad72c5a5
+--- /dev/null
++++ b/arch/arm64/boot/dts/amd/elba-asic-smartnic.dts
+@@ -0,0 +1,600 @@
++// SPDX-License-Identifier: GPL-2.0
++/* Copyright (c) 2019-2021, Pensando Systems Inc. */
++
++/dts-v1/;
++/* SmartNIC */
++
++/ {
++	#address-cells = <2>;
++	#size-cells = <2>;
++
++	aliases {
++		spi0 = &spi0;
++		spi1 = &qspi;
++	};
++
++	gic: gic {
++		/* Dummy gic node, only used for phandle reference.
++		 * Xen will populate real vGIC node.
++		 */
++		#interrupt-cells = <3>;
++		interrupt-controller;
++	};
++
++	reserved-memory {
++		#address-cells = <2>;
++		#size-cells = <2>;
++		ranges;
++
++		mnet_reserved: mnet_dma_region {
++			compatible = "shared-dma-pool";
++			no-map;
++			size = <0x0 0x6000000>;
++			alignment = <0x0 0x1000>;
++		};
++	};
++
++	passthrough {
++		compatible = "simple-bus";
++		ranges;
++		#address-cells = <2>;
++		#size-cells = <2>;
++		dma-coherent;
++
++		ahb_clk: oscillator0 {
++			compatible = "fixed-clock";
++			#clock-cells = <0>;
++			clock-frequency = <400000000>;
++		};
++
++		emmc_clk: oscillator2 {
++			compatible = "fixed-clock";
++			#clock-cells = <0>;
++			clock-frequency = <200000000>;
++		};
++
++		flash_clk: oscillator3 {
++			compatible = "fixed-clock";
++			#clock-cells = <0>;
++			clock-frequency = <400000000>;
++		};
++
++		ref_clk: oscillator4 {
++			compatible = "fixed-clock";
++			#clock-cells = <0>;
++			clock-frequency = <156250000>;
++		};
++
++		gmac_clk: oscillator5 {
++			compatible = "fixed-clock";
++			#clock-cells = <0>;
++			clock-frequency = <250000000>;
++		};
++
++		capmem {
++			compatible = "pensando,capmem";
++			pensando,capmem-fixed-ranges =
++				/*
++				 * Device register windows, split to exclude the physical
++				 * GIC block (GICD/ITS 0x800000, GICR 0xa00000, end 0xbfffff)
++				 * and GICC CPU interfaces at 0x60000000-0x60001fff.
++				 * Direct-mapping the GIC bypasses Xen's vGIC/vITS and
++				 * exposes host interrupt state to the guest.
++				 */
++				<0x0 0x200000  0x0 0x600000   0x4>,   /* 0x200000-0x7fffff (before GICD) */
++				<0x0 0xc00000  0x0 0x5f400000 0x4>,   /* 0xc00000-0x5fffffff (after GICR) */
++				<0x0 0x60002000 0x0 0xfffe000 0x4>,   /* 0x60002000-0x6fffffff (after GICC) */
++				/* inb_mnic0 debug */
++				<0x00 0x80000000 0x00 0x4000000 0x01>,
++				/* Maps range 0x400000000-0x4003fffff as Device Memory */
++				<0x4 0x0 0x0 0x400000 0x4>;
++			pensando,capmem-ranges =
++				/* Maps 0x00c0000000-0x0c3ffffff  as Coherent */
++				<0x00000000 0xc0000000 0x00000000 0x04000000 0x00000001>,
++				/* Maps 0x00c4000000-0x1ffffffff as Non-coherent */
++				<0x00000000 0xc4000000 0x00000001 0x3c000000 0x00000000>,
++				/* Maps 0x1000000000-0x107fffffff as Bypass */
++				<0x00000010 0x00000000 0x00000000 0x80000000 0x00000002>,
++				/* Maps 0x1200000000-0x127fffffff as Non-coherent */
++				<0x00000012 0x00000000 0x00000000 0x80000000 0x00000000>;
++		};
++
++		/*
++		 * Caution: bsm@307c2080, pcie@307c2480, sbus@307c24a8,
++		 * sbus@307c24b8 and sbus@307c24c8 share a page.
++		 */
++		sbus@307c24a8 {
++			compatible = "pensando,sbus";
++			sbus-ring-num = <0>;
++			reg = <0x0 0x307c24a8 0x0 0x8>;
++			/* 4k page shared with pcie@307c2480 */
++			xen,reg = <0x0 0x307c2000 0x0 0x1000 0x0 0x307c2000>;
++			xen,path = "/soc/sbus@307c24a8";
++			xen,force-assign-without-iommu;
++		};
++
++		/*
++		 * Caution: bsm@307c2080, pcie@307c2480, sbus@307c24a8,
++		 * sbus@307c24b8 and sbus@307c24c8 share a page.
++		 */
++		sbus@307c24b8 {
++			compatible = "pensando,sbus";
++			sbus-ring-num = <1>;
++			reg = <0x0 0x307c24b8 0x0 0x8>;
++			/* 4k page shared with pcie@307c2480 */
++			xen,reg = <0x0 0x307c2000 0x0 0x1000 0x0 0x307c2000>;
++			xen,path = "/soc/sbus@307c24b8";
++			xen,force-assign-without-iommu;
++		};
++
++		/*
++		 * Caution: bsm@307c2080, pcie@307c2480, sbus@307c24a8,
++		 * sbus@307c24b8 and sbus@307c24c8 share a page.
++		 */
++		sbus@307c24c8 {
++			compatible = "pensando,sbus";
++			sbus-ring-num = <2>;
++			reg = <0x0 0x307c24c8 0x0 0x8>;
++			/* 4k page shared with pcie@307c2480 */
++			xen,reg = <0x0 0x307c2000 0x0 0x1000 0x0 0x307c2000>;
++			xen,path = "/soc/sbus@307c24c8";
++			xen,force-assign-without-iommu;
++		};
++
++		sbus@6f242134 {
++			compatible = "pensando,sbus";
++			sbus-ring-num = <3>;
++			reg = <0x0 0x6f242134 0x0 0x8>;
++			xen,reg = <0x0 0x6f242000 0x0 0x1000 0x0 0x6f242000>; /* 4k page */
++			xen,path = "/soc/sbus@6f242134";
++			xen,force-assign-without-iommu;
++		};
++
++		mnet0: mnet0 {
++			compatible = "pensando,mnet";
++			msi-parent = <0xfdea 0x0>; /* hardcoded ITS phandle, no &its label */
++			memory-region = <&mnet_reserved>;
++		};
++		mnet1: mnet1 {
++			compatible = "pensando,mnet";
++			msi-parent = <0xfdea 0x1>;
++			memory-region = <&mnet_reserved>;
++		};
++		mnet2: mnet2 {
++			compatible = "pensando,mnet";
++			msi-parent = <0xfdea 0x2>;
++			memory-region = <&mnet_reserved>;
++		};
++		mnet3: mnet3 {
++			compatible = "pensando,mnet";
++			msi-parent = <0xfdea 0x3>;
++			memory-region = <&mnet_reserved>;
++		};
++		mnet4: mnet4 {
++			compatible = "pensando,mnet";
++			msi-parent = <0xfdea 0x4>;
++			memory-region = <&mnet_reserved>;
++		};
++		mnet5: mnet5 {
++			compatible = "pensando,mnet";
++			msi-parent = <0xfdea 0x5>;
++			memory-region = <&mnet_reserved>;
++		};
++		mnet6: mnet6 {
++			compatible = "pensando,mnet";
++			msi-parent = <0xfdea 0x6>;
++			memory-region = <&mnet_reserved>;
++		};
++		mnet7: mnet7 {
++			compatible = "pensando,mnet";
++			msi-parent = <0xfdea 0x7>;
++			memory-region = <&mnet_reserved>;
++		};
++		mnet8: mnet8 {
++			compatible = "pensando,mnet";
++			msi-parent = <0xfdea 0x8>;
++			memory-region = <&mnet_reserved>;
++		};
++		mnet9: mnet9 {
++			compatible = "pensando,mnet";
++			msi-parent = <0xfdea 0x9>;
++			memory-region = <&mnet_reserved>;
++		};
++
++		mcrypt0: mcrypt0 {
++			compatible = "pensando,mcrypt";
++			msi-parent = <0xfdea 0xb>;
++		};
++		mcrypt1: mcrypt1 {
++			compatible = "pensando,mcrypt";
++			msi-parent = <0xfdea 0xc>;
++		};
++		mcrypt2: mcrypt2 {
++			compatible = "pensando,mcrypt";
++			msi-parent = <0xfdea 0xd>;
++		};
++		mcrypt3: mcrypt3 {
++			compatible = "pensando,mcrypt";
++			msi-parent = <0xfdea 0xe>;
++		};
++
++		captun {
++			compatible = "oracle,captun";
++			shared_mem = <0x0 0xc5ff7000>;
++			shared_size = <0x0 0x8000>;
++			endpoint_addr = "169.254.1.100";
++			local_addr = "169.254.1.200";
++			initialize = "yes";
++		};
++
++		i2c0: i2c@400 {
++			compatible = "snps,designware-i2c";
++			reg = <0x0 0x400 0x0 0x100>;
++			clocks = <&ahb_clk>;
++			#address-cells = <1>;
++			#size-cells = <0>;
++			i2c-sda-hold-time-ns = <480>;
++			snps,sda-timeout-ms = <750>;
++			interrupt-parent = <&gic>;
++			interrupts = <0 4 4>;
++			status = "okay";
++			clock-frequency = <100000>;
++
++			xen,reg = <0x0 0x0 0x0 0x1000 0x0 0x0>; /* 4k page */
++			xen,path = "/soc/i2c@400";
++			xen,force-assign-without-iommu;
++
++			temp-sensor@4c {
++				compatible = "ti,tmp451";
++				reg = <0x4c>;
++			};
++
++			rtc@51 {
++				compatible = "nxp,pcf85263";
++				reg = <0x51>;
++			};
++
++			regulator@62 {
++				compatible = "ti,tps53659";
++				reg = <0x62>;
++			};
++		};
++
++		/*
++		 * Caution: wdt0 (watchdog@1400), wdt1 (watchdog@1800),
++		 * wdt2 (watchdog@1c00) and pcie@307c2480 share a page.
++		 */
++		wdt0: watchdog@1400 {
++			compatible = "snps,dw-wdt";
++			reg = <0x0 0x1400 0x0 0x100>;
++			clocks = <&ahb_clk>;
++			interrupt-parent = <&gic>;
++			interrupts = <0 10 4>;
++			status = "okay";
++			xen,reg = <0x0 0x1000 0x0 0x1000 0x0 0x1000>; /* 4k page */
++			xen,path = "/soc/watchdog@1400";
++			xen,force-assign-without-iommu;
++		};
++
++		/*
++		 * Group: spi0, gpio0, mssoc
++		 * Group must be assigned together to avoid breaking phandle references.
++		 * Caution: wdt3 (watchdog@2000), qspi (spi@2400), and spi0 (spi@2800) share a page
++		 */
++		spi0: spi@2800 {
++			compatible = "amd,pensando-elba-spi";
++			reg = <0x0 0x2800 0x0 0x100>;
++			amd,pensando-elba-syscon = <&mssoc>;
++			/* XXX pensando,spics = <&mssoc 0x2468 0>;*/
++			clocks = <&ahb_clk>;
++			interrupt-parent = <&gic>;
++			interrupts = <0 9 4>;
++			#address-cells = <1>;
++			#size-cells = <0>;
++			num-cs = <4>;
++			cs-gpios = <0>, <0>,
++				   <&porta 1 1>, <&porta 7 1>;
++			status = "okay";
++			xen,reg = <0x0 0x2000 0x0 0x1000 0x0 0x2000>; /* 4k page (overlaps qspi) */
++			xen,path = "/soc/spi@2800";
++			xen,force-assign-without-iommu;
++
++			spi@0 {
++				compatible = "amd,pensando-elbasr", "simple-mfd";
++				reg = <0>;
++				#address-cells = <1>;
++				#size-cells = <0>;
++				spi-max-frequency = <12000000>;
++
++				rstc: reset-controller@0 {
++					compatible = "amd,pensando-elbasr-reset";
++					reg = <0>;
++					#reset-cells = <1>;
++				};
++			};
++
++			spi@1 {
++				compatible = "amd,pensando-elbasr", "simple-mfd";
++				reg = <1>;
++				spi-max-frequency = <12000000>;
++			};
++
++			spi@2 {
++				compatible = "amd,pensando-cpld-rd1173";
++				reg = <2>;
++				spi-max-frequency = <12000000>;
++				interrupt-parent = <&porta>;
++				interrupts = <0 8>;
++			};
++
++			spi@3 {
++				compatible = "amd,pensando-elbasr", "simple-mfd";
++				reg = <3>;
++				spi-max-frequency = <12000000>;
++			};
++		};
++
++		/*
++		 * Caution: gpio and uart share a page
++		 * Hack: need to tell vpl011 to use a different IPA to assign gpio
++		 */
++		gpio0: gpio@4000 {
++			#address-cells = <1>;
++			#size-cells = <0>;
++			compatible = "snps,dw-apb-gpio";
++			reg = <0x0 0x4000 0x0 0x78>;
++			status = "okay";
++			xen,reg = <0x0 0x4000 0x0 0x1000 0x0 0x4000>; /* 4k page (overlaps uart) */
++			xen,path = "/soc/gpio@4000";
++			xen,force-assign-without-iommu;
++
++			porta: gpio-port@0 {
++				compatible = "snps,dw-apb-gpio-port";
++				reg = <0>;
++				gpio-controller;
++				#gpio-cells = <2>;
++				ngpios = <8>;
++				interrupts = <0 1 4>;
++				interrupt-controller;
++				interrupt-parent = <&gic>;
++				#interrupt-cells = <2>;
++
++				xen,reg; /* Empty xen,reg for mapping interrupt only */
++				xen,path = "/soc/gpio@4000/gpio-port@0";
++				xen,force-assign-without-iommu;
++			};
++
++			portb: gpio-port@1 {
++				compatible = "snps,dw-apb-gpio-port";
++				reg = <1>;
++				gpio-controller;
++				#gpio-cells = <2>;
++				ngpios = <8>;
++			};
++		};
++
++		mssoc: mssoc@307c0000 {
++			compatible = "amd,pensando-elba-syscon", "syscon";
++			reg = <0x0 0x307c0000 0x0 0x3000>;
++			xen,reg = <0x0 0x307c0000 0x0 0x3000 0x0 0x307c0000>;
++			xen,path = "/soc/syscon@307c0000";
++			xen,force-assign-without-iommu;
++		};
++
++		edac: edac@30500000 {
++			compatible = "pensando,elba-edac-mc";
++			reg = <0x0 0x30500000 0x0 0x100000>;
++			status = "okay";
++			xen,reg = <0x0 0x30500000 0x0 0x100000 0x0 0x30500000>;
++			xen,path = "/soc/edac@30500000";
++			xen,force-assign-without-iommu;
++		};
++
++		/*
++		 * group: stmmac_axi_setup, gmac0
++		 * group must be assigned together to avoid breaking phandle references
++		 */
++		stmmac_axi_setup: stmmac-axi-config {
++			snps,wr_osr_lmt = <0xf>;
++			snps,rd_osr_lmt = <0xf>;
++			snps,blen = <256 128 64 32 0 0 0>;
++		};
++
++		gmac0: ethernet@6f21a000 {
++			compatible = "snps,dwmac-3.70a", "snps,dwmac";
++			reg = <0x0 0x6f21a000 0x0 0x8000>;
++			clocks = <&gmac_clk>;
++			clock-names = "stmmaceth";
++			interrupt-parent = <&gic>;
++			interrupts = <0 29 4>;
++			interrupt-names = "macirq";
++			phy-mode = "gmii";
++			mac-address = [00 00 00 00 00 00];/* Filled in by U-Boot */
++			max-frame-size = <3800>;
++			snps,multicast-filter-bins = <256>;
++			snps,perfect-filter-entries = <128>;
++			rx-fifo-depth = <16384>;
++			tx-fifo-depth = <16384>;
++			snps,axi-config = <&stmmac_axi_setup>;
++			snps,pbl = <2>;
++			xen,reg = <0x0 0x6f21a000 0x0 0x8000 0x0 0x6f21a000>;
++			xen,path = "/soc/ethernet@6f21a000";
++			xen,force-assign-without-iommu;
++			fixed-link {
++				speed = <100>;
++				full-duplex;
++			};
++		};
++
++		/*
++		 * Reset needs spi0 (spi@2800) access. If spi0 and emmc are not
++		 * assigned together, remove cap-mmc-hw-reset, reset-names, and
++		 * resets.
++		 */
++		emmc: mmc@30440000 {
++			compatible = "amd,pensando-elba-sd4hc", "cdns,sd4hc";
++			clocks = <&emmc_clk>;
++			interrupt-parent = <&gic>;
++			interrupts = <0 26 4>;
++			reg = <0x0 0x30440000 0x0 0x10000>,
++			      <0x0 0x30480044 0x0 0x4>;
++			cdns,phy-input-delay-sd-highspeed = <0x4>;
++			cdns,phy-input-delay-legacy = <0x4>;
++			cdns,phy-input-delay-sd-uhs-sdr50 = <0x6>;
++			cdns,phy-input-delay-sd-uhs-ddr50 = <0x16>;
++			cdns,phy-dll-delay-sdclk = <0>;
++			cdns,phy-dll-delay-sdclk-hsmmc = <0>;
++			cdns,mmc-ddr-1_8v;
++			bus-width = <8>;
++			cap-mmc-hw-reset;
++			reset-names = "hw";
++			resets = <&rstc 0>;
++			status = "okay";
++			xen,reg = <0x0 0x30440000 0x0 0x10000 0x0 0x30440000>,
++				  <0x0 0x30480000 0x0 0x1000 0x0 0x30480000>; /* 4k page */
++			xen,path = "/soc/mmc@30440000";
++			xen,force-assign-without-iommu;
++		};
++
++		/*
++		 * Caution: wdt3 (watchdog@2000), qspi (spi@2400), and spi0 (spi@2800) share a page
++		 * qspi can still be assigned independently
++		 */
++		qspi: spi@2400 {
++			compatible = "amd,pensando-elba-qspi";
++			#address-cells = <1>;
++			#size-cells = <0>;
++			reg = <0x0 0x2400 0x0 0x400>,
++			      <0x0 0x7fff0000 0x0 0x1000>;
++			interrupt-parent = <&gic>;
++			interrupts = <0 0 4>;
++			clocks = <&flash_clk>;
++			cdns,fifo-depth = <1024>;
++			cdns,fifo-width = <4>;
++			cdns,trigger-address = <0x7fff0000>;
++			status = "okay";
++
++			xen,reg = <0x0 0x2000 0x0 0x1000 0x0 0x2000>, /* 4k page */
++				  <0x0 0x7fff0000 0x0 0x1000 0x0 0x7fff0000>;
++			xen,path = "/soc/spi@2400";
++			xen,force-assign-without-iommu;
++
++			flash0: flash@0 {
++				compatible = "jedec,spi-nor";
++				reg = <0>;
++				spi-max-frequency = <40000000>;
++				spi-rx-bus-width = <2>;
++				m25p,fast-read;
++				cdns,read-delay = <0>;
++				cdns,tshsl-ns = <0>;
++				cdns,tsd2d-ns = <0>;
++				cdns,tchsh-ns = <0>;
++				cdns,tslch-ns = <0>;
++			};
++		};
++
++		/*
++		 * Caution: bsm@307c2080, pcie@307c2480, sbus@307c24a8,
++		 * sbus@307c24b8 and sbus@307c24c8 share a page.
++		 */
++		bsm@307c2080 {
++			compatible = "pensando,bsm";
++			reg = <0x0 0x307c2080 0x0 0x4>;
++			/* 4k page shared with pcie@307c2480 */
++			xen,reg = <0x0 0x307c2000 0x0 0x1000 0x0 0x307c2000>;
++			xen,path = "/soc/bsm@307c2080";
++			xen,force-assign-without-iommu;
++		};
++
++		rstcause {
++			compatible = "pensando,rstcause";
++			pensando,causeregs = <&mssoc 0x2084>;
++		};
++
++		/* Dependency on qspi */
++		panicdump@740b0000 {
++			compatible = "pensando,capri-crash";
++			reg = <0x0 0x740b0000 0x0 0x20000>;
++			xen,reg = <0x0 0x740b0000 0x0 0x20000 0x0 0x740b0000>;
++			xen,path = "/soc/panicdump@740b0000";
++			xen,force-assign-without-iommu;
++		};
++	};
++};
++
++/include/ "elba-flash-parts-xen.dtsi"
++
++/*
++ * U-Boot fixups
++ *
++ * U-Boot adds/modifies some properties in the device tree. We don't
++ * currently have a clean way to propagate these changes to the partial
++ * device trees. Hardcode the fixups for now.
++ */
++
++/* ft_system_setup() */
++/ {
++	passthrough {
++		dma-coherent;
++	};
++};
++
++&flash0 {
++	spi-max-frequency = <40000000>;
++	cdns,read-delay = <0>;
++};
++
++/* edac_fdt_setup() */
++&edac {
++	pensando,ddrbhash = <0x00 0xfff8100>;
++	pensando,bypass = <0x00 0x80000000 0x00 0x4000000 0x00 0x00 0x00 0x80000000>;
++	pensando,llchash = <0x00 0x400>;
++	pensando,ddrchanmask = <0x03>;
++};
++
++/* pcie_fdt_setup() */
++/ {
++	passthrough {
++		pcie@307c2480 {
++			ports_initialized = <0x1000000>;
++			crs_off_early = <0x00>;
++			clock_freq = <0x4054923d>;
++			presets16gt = <0x00>;
++			cap_width = <0x10000000>;
++			cap_gen = <0x4000000>;
++			pcie_port = <0x00>;
++			/* fwenv_* = ... */
++		};
++	};
++};
++
++/* pcie_swparam_fdt_setup() */
++/ {
++	passthrough {
++		kpcimgr@20000000 {
++			/* reg = ... */
++		};
++	};
++};
++
++/* temp_sensor_fdt_setup() */
++&i2c0 {
++	temp-sensor@4c {
++		compatible = "ti,tmp451";
++		/* compatible = "nxp,sa56004"; */
++		/* compatible = "onnn,nct1008"; */
++	};
++};
++
++/* vrm_sensor_fdt_setup() */
++&i2c0 {
++	regulator@62 {
++		compatible = "ti,tps53659";
++		/* compatible = "lltc,ltc3888"; */
++	};
++};
++
++/* emmc_bypass_setup() */
++&emmc {
++	pensando,bounce-buffer = <0x0 0x80000000 0x0 0x4000000>;
++};
+diff --git a/arch/arm64/boot/dts/amd/elba-asic-xen.dts b/arch/arm64/boot/dts/amd/elba-asic-xen.dts
+new file mode 100644
+index 000000000000..505067daadfc
+--- /dev/null
++++ b/arch/arm64/boot/dts/amd/elba-asic-xen.dts
+@@ -0,0 +1,104 @@
++// SPDX-License-Identifier: GPL-2.0
++
++/dts-v1/;
++
++/ {
++	model = "Elba ASIC Board";
++	compatible = "pensando,elba";
++
++	aliases {
++		serial0 = &uart0;
++		spi0 = &spi0;
++		spi1 = &qspi;
++	};
++
++	chosen {
++		stdout-path = "serial0:115200n8";
++		bootargs = "earlycon=uart8250,mmio32,0x4800 softdog.soft_panic=1 root=PARTUUID=D4E53BE5-7DC1-4199-914C-48EDFEA92C5E rootwait FW_NAME=mainfwa console=ttyS0,115200n8";
++		xen,xen-bootargs = "console=dtuart dtuart=serial0 loglvl=all guest_loglvl=all bootscrub=0 sched=null dom0_mem=4G dom0_max_vcpus=4";
++
++		smartnic_cpupool {
++			compatible = "xen,cpupool";
++			cpupool-cpus = <0x0000000d 0x0000000e 0x0000000f 0x00000010
++				       0x00000011 0x00000012 0x00000013 0x00000014
++				       0x00000015 0x00000016 0x00000017 0x00000018>;
++			cpupool-sched = "null";
++			phandle = <0xfde7>;
++		};
++
++		hostnic_cpupool {
++			compatible = "xen,cpupool";
++			cpupool-cpus = <0x0000001b 0x0000001c>;
++			cpupool-sched = "null";
++			phandle = <0xfde6>;
++		};
++
++		domU0 {
++			compatible = "xen,domain";
++			#address-cells = <2>;
++			#size-cells = <2>;
++
++			memory = <0x00 0x00f68000>;  // 15776 MB
++			cpus = <12>;		// Replace as needed
++			vpl011;
++			direct-map;
++			domain-cpupool = <0xfde7>;
++
++			xen,static-mem = <
++				/* paddr0, size0: not set */
++				0x00 0x98000000 0x00 0x20000000       // static_mem1: 512M
++				0x12 0x80000000 0x03 0x80000000       // static_mem2: 14336M
++				/* paddr3, size3: not set */
++				0x17 0x80000000 0x00 0x3a000000       // static_mem4: 928M
++				/* paddr5, size5: not set */>;
++
++			module1 {
++				bootargs = "root=PARTUUID=D4E53BE5-7DC1-4199-914C-48EDFEA92C5E rootwait FW_NAME=mainfwa earlycon=pl011,mmio32,0x5000 console=ttyAMA0 softdog.soft_noboot=1 ignore_loglevel";
++				reg = <0x00000000 0x87000000 0x00000000 0x0110e808>;
++				compatible = "multiboot,kernel", "multiboot,module";
++			};
++
++			module2 {
++				reg = <0x00000000 0x85000000 0x00000000 0x00010000>;
++				compatible = "multiboot,device-tree", "multiboot,module";
++			};
++
++		};
++		domU1 {
++			compatible = "xen,domain";
++			#address-cells = <2>;
++			#size-cells = <2>;
++
++			memory = <0x0 0x00500000>;
++			cpus = <2>;
++			vpl011;
++			direct-map;
++			domain-cpupool = <0xfde6>;
++
++			xen,static-mem = <0x00000016 0x00000000 0x00000001 0x40000000>;
++			module1 {
++				bootargs = "root=/dev/ram rw init=/init earlycon=pl011,mmio32,0x5000 console=ttyAMA0 softdog.soft_noboot=1 FW_NAME=goldfw ignore_loglevel";
++				reg = <0x00000000 0x90000000 0x00000000 0x0110e808>;
++				compatible = "multiboot,kernel", "multiboot,module";
++			};
++
++			module2 {
++				reg = <0x00000000 0x86000000 0x00000000 0x00010000>;
++				compatible = "multiboot,device-tree", "multiboot,module";
++			};
++
++			ramdisk {
++				reg = <0x00000017 0x40000000 0x00000000 0x0d889000>;
++				compatible = "multiboot,ramdisk", "multiboot,module";
++			};
++		};
++	};
++};
++
++#include "elba.dtsi"
++#include "elba-16core.dtsi"
++#include "elba-16core-psci.dtsi"
++#include "elba-asic-common.dtsi"
++#include "elba-flash-parts.dtsi"
++#include "elba-asic-memory.dtsi"
++#include "elba-mdev.dtsi"
+diff --git a/arch/arm64/boot/dts/amd/elba-flash-parts-xen.dtsi b/arch/arm64/boot/dts/amd/elba-flash-parts-xen.dtsi
+new file mode 100644
+index 000000000000..a9c5d25da4b0
+--- /dev/null
++++ b/arch/arm64/boot/dts/amd/elba-flash-parts-xen.dtsi
+@@ -0,0 +1,108 @@
++// SPDX-License-Identifier: GPL-2.0
++
++&flash0 {
++	partitions {
++		compatible = "fixed-partitions";
++		#address-cells = <1>;
++		#size-cells = <1>;
++		partition@0 {
++			label = "flash";
++			reg = <0x10000 0xfff0000>;
++		};
++
++		partition@f0000 {
++			label = "golduenv";
++			reg = <0xf0000 0x10000>;
++		};
++
++		partition@100000 {
++			label = "boot0";
++			reg = <0x100000 0x80000>;
++		};
++
++		partition@180000 {
++			label = "golduboot";
++			reg = <0x180000 0x200000>;
++		};
++
++		partition@380000 {
++			label = "brdcfg0";
++			reg = <0x380000 0x10000>;
++		};
++
++		partition@390000 {
++			label = "brdcfg1";
++			reg = <0x390000 0x10000>;
++		};
++
++		partition@400000 {
++			label = "goldfw";
++			reg = <0x400000 0x3c00000>;
++		};
++
++		partition@4010000 {
++			label = "fwmap";
++			reg = <0x4010000 0x20000>;
++		};
++
++		partition@4030000 {
++			label = "fwsel";
++			reg = <0x4030000 0x20000>;
++		};
++
++		partition@4090000 {
++			label = "bootlog";
++			reg = <0x4090000 0x20000>;
++		};
++
++		partition@40b0000 {
++			label = "panicbuf";
++			reg = <0x40b0000 0x20000>;
++		};
++
++		partition@40d0000 {
++			label = "uservars";
++			reg = <0x40d0000 0x20000>;
++		};
++
++		partition@4200000 {
++			label = "uboota";
++			reg = <0x4200000 0x400000>;
++		};
++
++		partition@4600000 {
++			label = "ubootb";
++			reg = <0x4600000 0x400000>;
++		};
++
++		partition@4a00000 {
++			label = "mainfwa";
++			reg = <0x4a00000 0x1000000>;
++		};
++
++		partition@5a00000 {
++			label = "mainfwb";
++			reg = <0x5a00000 0x1000000>;
++		};
++
++		partition@6a00000 {
++			label = "diaguboot";
++			reg = <0x6a00000 0x400000>;
++		};
++
++		partition@6e00000 {
++			label = "flashobfl";
++			reg = <0x6e00000 0x1200000>;
++		};
++
++		partition@8000000 {
++			label = "diagfw";
++			reg = <0x8000000 0x7fe0000>;
++		};
++
++		partition@ffe0000 {
++			label = "ubootenv";
++			reg = <0xffe0000 0x10000>;
++		};
++	};
++};
+diff --git a/arch/arm64/boot/dts/amd/salina-asic-hostnic.dts b/arch/arm64/boot/dts/amd/salina-asic-hostnic.dts
+new file mode 100644
+index 000000000000..64985a9719f6
+--- /dev/null
++++ b/arch/arm64/boot/dts/amd/salina-asic-hostnic.dts
+@@ -0,0 +1,129 @@
++// SPDX-License-Identifier: GPL-2.0
++/* Copyright (c) 2023-2024, Advanced Micro Devices, Inc. */
++
++/dts-v1/;
++/* HostNIC - Salina Xen domU (partial device tree) */
++
++/*
++ * Ported from elba-asic-hostnic.dts. The Elba hostnic is almost entirely a
++ * dataplane passthrough (pcie, kpcimgr, pciemac, uio_penmsi1, capmem, captun),
++ * whose Salina physical addresses differ from Elba and are NOT present in the
++ * Salina tree. This minimal version brings up a bootable domU (clocks + one
++ * mnet + mnet dma pool); the NIC dataplane nodes are listed in the
++ * "DATAPLANE TODO" block and must be filled with Salina addresses.
++ */
++
++/ {
++	#address-cells = <2>;
++	#size-cells = <2>;
++
++	gic: gic {
++		/* Dummy gic node, only used for phandle reference.
++		 * Xen will populate real vGIC node.
++		 */
++		#interrupt-cells = <3>;
++		interrupt-controller;
++	};
++
++	reserved-memory {
++		#address-cells = <2>;
++		#size-cells = <2>;
++		ranges;
++
++		mnet_reserved: mnet_dma_region {
++			compatible = "shared-dma-pool";
++			no-map;
++			size = <0x0 0x6000000>;
++			alignment = <0x0 0x1000>;
++		};
++	};
++
++	passthrough {
++		compatible = "simple-bus";
++		ranges;
++		#address-cells = <2>;
++		#size-cells = <2>;
++		dma-coherent;
++
++		ahb_clk: oscillator0 {
++			compatible = "fixed-clock";
++			#clock-cells = <0>;
++			clock-frequency = <400000000>;
++		};
++
++		emmc_clk: oscillator2 {
++			compatible = "fixed-clock";
++			#clock-cells = <0>;
++			clock-frequency = <200000000>;
++		};
++
++		flash_clk: oscillator3 {
++			compatible = "fixed-clock";
++			#clock-cells = <0>;
++			clock-frequency = <400000000>;
++		};
++
++		ref_clk: oscillator4 {
++			compatible = "fixed-clock";
++			#clock-cells = <0>;
++			clock-frequency = <100000000>;
++		};
++
++		gmac_clk: oscillator5 {
++			compatible = "fixed-clock";
++			#clock-cells = <0>;
++			clock-frequency = <200000000>;
++		};
++
++		mnet0: mnet0 {
++			compatible = "pensando,mnet";
++			msi-parent = <0xfdea 0x0>;
++			memory-region = <&mnet_reserved>;
++		};
++
++		/* Salina capmem fixed-ranges (from salina-asic.dtsi); attr 0x4 = DEVICE.
++		 * The GIC block 0x1000000-0x1260000 (GICD 0x1000000 + ITS 0x1040000 +
++		 * GICR 0x1060000) is carved OUT — same fix as the smartnic. Direct-
++		 * device-mapping the GIC bypasses Xen's vGIC/vITS; the guest hits the
++		 * physical redistributors/ITS ("Booted with LPIs enabled, memory
++		 * probably corrupted" / "Failed to disable LPIs") and hangs bringing
++		 * up secondary vCPUs. Xen emulates GICD+GICR+ITS, so these must trap.
++		 */
++		capmem {
++			compatible = "pensando,capmem";
++			pensando,capmem-fixed-ranges =
++				<0x0 0x10000 0x0 0xff0000 0x4>,      /* below GIC */
++				<0x0 0x1260000 0x0 0x6eda0000 0x4>,  /* above GICR */
++				<0x2 0x40000000 0x0 0x8000000 0x4>;
++			/* Coherent + non-coherent DP/shared RAM windows; captun shared_mem
++			 * 0xc5ff7000 lives in the 0xc4000000 non-coherent range. Mirrors the
++			 * smartnic + Elba — maps the shared window so captun's mmap works.
++			 */
++			pensando,capmem-ranges =
++				<0x0 0xc0000000 0x0 0x04000000 0x1>,   /* coherent */
++				<0x0 0xc4000000 0x1 0x3c000000 0x0>,   /* non-coherent (captun) */
++				/*
++				 * hbm_mem_hostnic.json bypass and hi ranges (U-Boot DP memlayout
++				 * [8] above the snic's session_info, [10] at DDR offset 12-15G):
++				 * 0x1020000000-0x107fffffff bypass, 0x4300000000-0x43bfffffff NC
++				 */
++				<0x10 0x20000000 0x0 0x60000000 0x2>,  /* bypass */
++				<0x43 0x00000000 0x0 0xc0000000 0x0>;  /* non-coherent */
++		};
++
++		/* captun tunnel to smartnic (mirror of smartnic captun, reversed) */
++		captun {
++			compatible = "oracle,captun";
++			shared_mem = <0x0 0xc5ff7000>;
++			shared_size = <0x0 0x8000>;
++			endpoint_addr = "169.254.1.200";
++			local_addr = "169.254.1.100";
++		};
++	};
++};
++
++/*
++ * Dataplane note (Salina): the Elba hostnic was almost entirely PCIe dataplane
++ * (pcie / kpcimgr / pciemac / uio_penmsi1). On Salina those live on the A35
++ * (Zephyr), not N1 Linux, so this domU is just the captun endpoint + mnet.
++ */
+diff --git a/arch/arm64/boot/dts/amd/salina-asic-smartnic.dts b/arch/arm64/boot/dts/amd/salina-asic-smartnic.dts
+new file mode 100644
+index 000000000000..1eef8451fad5
+--- /dev/null
++++ b/arch/arm64/boot/dts/amd/salina-asic-smartnic.dts
+@@ -0,0 +1,601 @@
++// SPDX-License-Identifier: GPL-2.0
++/* Copyright (c) 2023-2024, Advanced Micro Devices, Inc. */
++
++/dts-v1/;
++/* SmartNIC - Salina Xen domU (partial device tree) */
++
++/*
++ * Ported from elba-asic-smartnic.dts. SoC control-plane passthrough addresses
++ * are Salina-specific (from salina-asic.dtsi):
++ *   syscon@61000000  spi@b0000  spi@a0000(qspi1)  gpio@d0000
++ *   sdio-host-chip@600000  i2c@30000  i2c@40000  watchdog@50000
++ *   edac@42c00000  ethernet@6d73a000  serial@100000
++ * Unlike Elba, Salina peripherals are each on their own 64K page, so the
++ * passthrough xen,reg entries do not need the "shared page" overlap handling.
++ *
++ * NOTE: the dataplane passthrough nodes (capmem physical ranges, sbus, pcie,
++ * kpcimgr, pciemac, captun, panicdump) are NOT included yet - their Salina
++ * physical addresses differ from Elba and are not present in the Salina tree.
++ * See the "DATAPLANE TODO" block at the end. Without them this domU boots
++ * under Xen with control-plane devices but no NIC dataplane.
++ */
++
++/ {
++	#address-cells = <2>;
++	#size-cells = <2>;
++
++	aliases {
++		i2c1 = &i2c2;	/* i2c@30000 -> /dev/i2c-1 (sensors/FRU); agent's fixed path */
++		i2c2 = &i2c3;	/* i2c@40000 -> Linux /dev/i2c-2 (MCTP) */
++		spi0 = &spi0;
++		spi1 = &qspi1;
++	};
++
++	gic: gic {
++		/* Dummy gic node, only used for phandle reference.
++		 * Xen will populate real vGIC node.
++		 */
++		#interrupt-cells = <3>;
++		interrupt-controller;
++	};
++
++	reserved-memory {
++		#address-cells = <2>;
++		#size-cells = <2>;
++		ranges;
++
++		mnet_reserved: mnet_dma_region {
++			compatible = "shared-dma-pool";
++			no-map;
++			size = <0x0 0x6000000>;
++			alignment = <0x0 0x1000>;
++		};
++	};
++
++	passthrough {
++		compatible = "simple-bus";
++		ranges;
++		#address-cells = <2>;
++		#size-cells = <2>;
++		dma-coherent;
++
++		ahb_clk: oscillator0 {
++			compatible = "fixed-clock";
++			#clock-cells = <0>;
++			clock-frequency = <400000000>;
++		};
++
++		emmc_clk: oscillator2 {
++			compatible = "fixed-clock";
++			#clock-cells = <0>;
++			clock-frequency = <200000000>;
++		};
++
++		flash_clk: oscillator3 {
++			compatible = "fixed-clock";
++			#clock-cells = <0>;
++			clock-frequency = <400000000>;
++		};
++
++		ref_clk: oscillator4 {
++			compatible = "fixed-clock";
++			#clock-cells = <0>;
++			clock-frequency = <100000000>;
++		};
++
++		gmac_clk: oscillator5 {
++			compatible = "fixed-clock";
++			#clock-cells = <0>;
++			clock-frequency = <200000000>;
++		};
++
++		/* MSI-capable dataplane devices (ITS phandle hardcoded as on Elba) */
++		mnet0: mnet0 {
++			compatible = "pensando,mnet";
++			msi-parent = <0xfdea 0x0>;
++			memory-region = <&mnet_reserved>;
++		};
++		mnet1: mnet1 {
++			compatible = "pensando,mnet";
++			msi-parent = <0xfdea 0x1>;
++			memory-region = <&mnet_reserved>;
++		};
++		mnet2: mnet2 {
++			compatible = "pensando,mnet";
++			msi-parent = <0xfdea 0x2>;
++			memory-region = <&mnet_reserved>;
++		};
++		mnet3: mnet3 {
++			compatible = "pensando,mnet";
++			msi-parent = <0xfdea 0x3>;
++			memory-region = <&mnet_reserved>;
++		};
++		mnet4: mnet4 {
++			compatible = "pensando,mnet";
++			msi-parent = <0xfdea 0x4>;
++			memory-region = <&mnet_reserved>;
++		};
++		mnet5: mnet5 {
++			compatible = "pensando,mnet";
++			msi-parent = <0xfdea 0x5>;
++			memory-region = <&mnet_reserved>;
++		};
++		mnet6: mnet6 {
++			compatible = "pensando,mnet";
++			msi-parent = <0xfdea 0x6>;
++			memory-region = <&mnet_reserved>;
++		};
++		mnet7: mnet7 {
++			compatible = "pensando,mnet";
++			msi-parent = <0xfdea 0x7>;
++			memory-region = <&mnet_reserved>;
++		};
++		mnet8: mnet8 {
++			compatible = "pensando,mnet";
++			msi-parent = <0xfdea 0x8>;
++			memory-region = <&mnet_reserved>;
++		};
++		mnet9: mnet9 {
++			compatible = "pensando,mnet";
++			msi-parent = <0xfdea 0x9>;
++			memory-region = <&mnet_reserved>;
++		};
++
++		mcrypt0: mcrypt0 {
++			compatible = "pensando,mcrypt";
++			msi-parent = <0xfdea 0xb>;
++		};
++		mcrypt1: mcrypt1 {
++			compatible = "pensando,mcrypt";
++			msi-parent = <0xfdea 0xc>;
++		};
++		mcrypt2: mcrypt2 {
++			compatible = "pensando,mcrypt";
++			msi-parent = <0xfdea 0xd>;
++		};
++		mcrypt3: mcrypt3 {
++			compatible = "pensando,mcrypt";
++			msi-parent = <0xfdea 0xe>;
++		};
++
++		/* Salina capmem (from salina-asic.dtsi). fixed-ranges attr 0x4 =
++		 * DSC_MEM_ATTR_DEVICE (dataplane register windows). capmem-ranges adds
++		 * the coherent/non-coherent shared-RAM windows — REQUIRED for captun
++		 * (shared_mem 0xc5ff7000 is in the 0xc4000000 non-coherent window);
++		 * without it the capmem driver exposes no RAM window and captun's mmap
++		 * fails. (The full DP/PCIe path still runs on the A35/Zephyr, not N1.)
++		 *
++		 * DEBUG (Xen domU hang): base raised 0x10000 -> 0x200000 (excludes the
++		 * console UART 0x100000 + low SoC peripherals, already xen,reg'd), AND
++		 * the GIC block 0x1000000-0x1260000 (GICD 0x1000000 + ITS 0x1040000 +
++		 * GICR 0x1060000) is carved OUT. Direct-device-mapping the GIC bypassed
++		 * Xen's vGIC/vITS (guest hit the physical redistributors/ITS: host LPI
++		 * state leaked, and secondary-vCPU redistributor init wedged). Xen
++		 * emulates GICD+GICR+ITS (CONFIG_HAS_ITS), so these must trap, not map.
++		 */
++		capmem {
++			compatible = "pensando,capmem";
++			pensando,capmem-fixed-ranges =
++				<0x0 0x200000  0x0 0xe00000   0x4>,   /* below GIC */
++				<0x0 0x1260000 0x0 0x6eda0000 0x4>,   /* above GICR */
++				<0x2 0x40000000 0x0 0x8000000 0x4>;
++			/* Coherent + non-coherent DP/shared RAM windows; captun shared_mem
++			 * 0xc5ff7000 lives in the 0xc4000000 non-coherent range. Salina was
++			 * missing capmem-ranges entirely ("capmem-ranges not found"), so
++			 * /bin/captun's mmap of the shared window failed. Mirrors Elba.
++			 */
++			pensando,capmem-ranges =
++				<0x0 0xc0000000 0x0 0x04000000 0x1>,   /* coherent */
++				<0x0 0xc4000000 0x1 0x3c000000 0x0>,   /* non-coherent (captun) */
++				/* 0x1000000000 .. 0x1080000000 LLC-bypass (attr 0x2 =
++				 * DSC_MEM_ATTR_BYPASS): HBM dataplane region [8] (U-Boot map
++				 * "DP NS NC BYP"). athena pipeline_init mmaps session_info @
++				 * 0x1000000000 (512 MiB) through /dev/capmem to program the
++				 * HBM table base addresses. Without this entry Xen never
++				 * p2m-maps the region AND the capmem driver's cap_mem_mmap
++				 * rejects it -> mmap returns MAP_FAILED -> mmap_region.c:68
++				 * assert (SIGABRT in asicpd_set_hbm_table_base_addr).
++				 * Mirrors elba-asic-smartnic.dts; Salina has no 0x1200000000
++				 * region so that second Elba bypass/NC entry is omitted.
++				 */
++				<0x10 0x00000000 0x0 0x80000000 0x2>;  /* bypass */
++		};
++
++		captun {
++			compatible = "oracle,captun";
++			shared_mem = <0x0 0xc5ff7000>;
++			shared_size = <0x0 0x8000>;
++			endpoint_addr = "169.254.1.100";
++			local_addr = "169.254.1.200";
++			initialize = "yes";
++		};
++
++		/* syscon (Elba: mssoc@307c0000 -> Salina: syscon@61000000) */
++		syscon: syscon@61000000 {
++			compatible = "amd,pensando-elba-syscon", "syscon";
++			reg = <0x0 0x61000000 0x0 0x80000>;
++			xen,reg = <0x0 0x61000000 0x0 0x80000 0x0 0x61000000>;
++			xen,path = "/soc/syscon@61000000";
++			xen,force-assign-without-iommu;
++		};
++
++		/*
++		 * spi0 drives the elbasr/CPLD reset-controller used by emmc
++		 * hw-reset. Keep spi0 and emmc assigned together.
++		 */
++		spi0: spi@b0000 {
++			compatible = "amd,pensando-elba-spi";
++			reg = <0x0 0xb0000 0x0 0x100>;
++			amd,pensando-elba-syscon = <&syscon>;
++			clocks = <&ahb_clk>;
++			interrupt-parent = <&gic>;
++			interrupts = <0 12 4>;
++			#address-cells = <1>;
++			#size-cells = <0>;
++			num-cs = <4>;
++			status = "okay";
++			xen,reg = <0x0 0xb0000 0x0 0x1000 0x0 0xb0000>;
++			xen,path = "/soc/spi@b0000";
++			xen,force-assign-without-iommu;
++
++			spi@0 {
++				compatible = "amd,pensando-cpld-spimux";
++				reg = <0>;
++				#address-cells = <1>;
++				#size-cells = <0>;
++				cs0 = <&spi0 0>;
++				cs1 = <&spi0 1>;
++
++				spi@0 {
++					compatible = "amd,pensando-elbasr", "simple-mfd";
++					reg = <0>;
++					#address-cells = <1>;
++					#size-cells = <0>;
++					spi-max-frequency = <5000000>;
++
++					rstc: reset-controller@0 {
++						compatible = "amd,pensando-elbasr-reset";
++						reg = <0>;
++						spi-reset-frequency = <500000>;
++						#reset-cells = <1>;
++					};
++				};
++
++				spi@1 {
++					compatible = "amd,pensando-elbasr", "simple-mfd";
++					reg = <1>;
++					spi-max-frequency = <5000000>;
++				};
++
++				spi@2 {
++					compatible = "amd,pensando-cpld-rd1173";
++					reg = <2>;
++					spi-max-frequency = <12000000>;
++					/*
++					 * Match the native Salina DT
++					 * (salina-n1-common.dtsi): the rd1173 driver
++					 * prefers the gpiod path (interrupt-gpios),
++					 * which calls gpiod_direction_input() to put
++					 * the CPLD interrupt line in input mode. Without
++					 * it the driver falls back to the raw spi->irq
++					 * and the completion IRQ never fires. 1 =
++					 * GPIO_ACTIVE_LOW; 8 = IRQ_TYPE_LEVEL_LOW.
++					 */
++					interrupt-gpios = <&porta 0 1>;
++					interrupt-parent = <&porta>;
++					interrupts = <0 8>;
++					/*
++					 * The smartnic domain owns all transceiver
++					 * I2C: rd1173 i2c0/i2c1 become /dev/i2c-3 and
++					 * /dev/i2c-4 (native parity). Requires the
++					 * gpio@d0000 parent to route GIC SPI-2 to this
++					 * domain (see interrupts there) so this node's
++					 * completion IRQ (gpiod on porta line 0) fires;
++					 * without it probe fails at gpiod_to_irq.
++					 */
++					status = "okay";
++				};
++
++				spi@3 {
++					compatible = "amd,pensando-elbasr", "simple-mfd";
++					reg = <3>;
++					spi-max-frequency = <12000000>;
++				};
++			};
++		};
++
++		gpio0: gpio@d0000 {
++			#address-cells = <1>;
++			#size-cells = <0>;
++			compatible = "snps,dw-apb-gpio";
++			reg = <0x0 0xd0000 0x0 0x78>;
++			status = "okay";
++			xen,reg = <0x0 0xd0000 0x0 0x1000 0x0 0xd0000>;
++			xen,path = "/soc/gpio@d0000";
++			xen,force-assign-without-iommu;
++			/*
++			 * Route GIC SPI-2 to this domain. Xen's
++			 * map_device_irqs_to_domain() reads interrupts only
++			 * from the xen,path node (dt_number_of_irq(node), no
++			 * recursion into children), so the porta child's IRQ
++			 * is invisible to it. Declaring it here routes the
++			 * physical SPI to the guest vGIC; Linux's dwapb driver
++			 * still takes its IRQ from the porta child below. This
++			 * is what feeds the cpld-rd1173 completion IRQ
++			 * (native: gpio-dwapb line 0 -> virq "cpld-rd1173").
++			 */
++			interrupts = <0 2 4>;
++			interrupt-parent = <&gic>;
++
++			porta: gpio-controller@0 {
++				compatible = "snps,dw-apb-gpio-port";
++				reg = <0>;
++				gpio-controller;
++				#gpio-cells = <2>;
++				ngpios = <8>;
++				interrupts = <0 2 4>;
++				interrupt-controller;
++				interrupt-parent = <&gic>;
++				#interrupt-cells = <2>;
++			};
++
++			portb: gpio-controller@1 {
++				compatible = "snps,dw-apb-gpio-port";
++				reg = <1>;
++				gpio-controller;
++				#gpio-cells = <2>;
++				ngpios = <8>;
++			};
++		};
++
++		i2c2: i2c@30000 {
++			compatible = "snps,designware-i2c";
++			reg = <0x0 0x30000 0x0 0x100>;
++			clocks = <&ahb_clk>;
++			#address-cells = <1>;
++			#size-cells = <0>;
++			i2c-sda-hold-time-ns = <480>;
++			snps,sda-timeout-ms = <750>;
++			interrupt-parent = <&gic>;
++			interrupts = <0 9 4>;
++			status = "okay";
++			clock-frequency = <100000>;
++			xen,reg = <0x0 0x30000 0x0 0x1000 0x0 0x30000>;
++			xen,path = "/soc/i2c@30000";
++			xen,force-assign-without-iommu;
++
++			temp-sensor@4c {
++				compatible = "ti,tmp451";
++				reg = <0x4c>;
++			};
++
++			ina3221@43 {
++				compatible = "ti,ina3221";
++				reg = <0x43>;
++				#address-cells = <1>;
++				#size-cells = <0>;
++
++				input@0 {
++					reg = <0>;
++					label = "P12VDIN";
++					shunt-resistor-micro-ohms = <2000>;
++				};
++
++				input@1 {
++					reg = <1>;
++					label = "V33";
++					shunt-resistor-micro-ohms = <1000>;
++				};
++
++				input@2 {
++					reg = <2>;
++					label = "VDDR";
++					shunt-resistor-micro-ohms = <1000>;
++				};
++			};
++
++			rtc@51 {
++				compatible = "nxp,pcf85263";
++				reg = <0x51>;
++			};
++
++			regulator@60 {
++				compatible = "ti,tps53659";
++				reg = <0x60>;
++			};
++		};
++
++		/*
++		 * MCTP bus (-> Linux /dev/i2c-2). Mirrors native bare-metal
++		 * (salina-asic-common.dtsi &i2c3): controller + mctp@32 endpoint
++		 * child so mctp-i2c-interface instantiates (native: 2-1032).
++		 * All I2C is owned by the smartnic domain; hostnic is isolated.
++		 */
++		i2c3: i2c@40000 {
++			compatible = "snps,designware-i2c";
++			reg = <0x0 0x40000 0x0 0x100>;
++			clocks = <&ahb_clk>;
++			#address-cells = <1>;
++			#size-cells = <0>;
++			i2c-sda-hold-time-ns = <480>;
++			snps,sda-timeout-ms = <750>;
++			interrupt-parent = <&gic>;
++			interrupts = <0 10 4>;
++			status = "okay";
++			clock-frequency = <100000>;
++			multi-master;
++			mctp-controller;
++			xen,reg = <0x0 0x40000 0x0 0x1000 0x0 0x40000>;
++			xen,path = "/soc/i2c@40000";
++			xen,force-assign-without-iommu;
++
++			mctp@32 {
++				compatible = "mctp-i2c-controller";
++				/* 0x32 | I2C_OWN_SLAVE_ADDRESS (1 << 30); renders as 2-1032 */
++				reg = <0x40000032>;
++			};
++		};
++
++		wdt0: watchdog@50000 {
++			compatible = "snps,dw-wdt";
++			reg = <0x0 0x50000 0x0 0x100>;
++			clocks = <&ahb_clk>;
++			interrupt-parent = <&gic>;
++			interrupts = <0 13 4>;
++			status = "okay";
++			xen,reg = <0x0 0x50000 0x0 0x1000 0x0 0x50000>;
++			xen,path = "/soc/watchdog@50000";
++			xen,force-assign-without-iommu;
++		};
++
++		edac: edac@42c00000 {
++			compatible = "pensando,salina-edac-mc";
++			reg = <0x0 0x42c00000 0x0 0x100000>,
++			      <0x0 0x42d00000 0x0 0x100000>,
++			      <0x0 0x30000000 0x0 0x100000>,
++			      <0x0 0x30100000 0x0 0x100000>;
++			status = "okay";
++			xen,reg = <0x0 0x42c00000 0x0 0x100000 0x0 0x42c00000>,
++				  <0x0 0x42d00000 0x0 0x100000 0x0 0x42d00000>,
++				  <0x0 0x30000000 0x0 0x100000 0x0 0x30000000>,
++				  <0x0 0x30100000 0x0 0x100000 0x0 0x30100000>;
++			xen,path = "/soc/edac@42c00000";
++			xen,force-assign-without-iommu;
++		};
++
++		stmmac_axi_setup: stmmac-axi-config {
++			snps,wr_osr_lmt = <0>;
++			snps,rd_osr_lmt = <0>;
++			snps,blen = <0 0 0 0 0 4 0>;
++		};
++
++		gmac0: ethernet@6d73a000 {
++			compatible = "snps,dwmac-3.70a", "snps,dwmac";
++			reg = <0x0 0x6d73a000 0x0 0x8000>;
++			clocks = <&gmac_clk>;
++			clock-names = "stmmaceth";
++			interrupt-parent = <&gic>;
++			interrupts = <0 57 4>;
++			interrupt-names = "macirq";
++			mac-address = [00 00 00 00 00 00];/* Filled in by U-Boot */
++			max-frame-size = <3800>;
++			phy-mode = "gmii";
++			snps,fixed-burst;
++			snps,multicast-filter-bins = <256>;
++			snps,perfect-filter-entries = <128>;
++			rx-fifo-depth = <16384>;
++			tx-fifo-depth = <16384>;
++			snps,axi-config = <&stmmac_axi_setup>;
++			snps,pbl = <2>;
++			xen,reg = <0x0 0x6d73a000 0x0 0x8000 0x0 0x6d73a000>;
++			xen,path = "/soc/ethernet@6d73a000";
++			xen,force-assign-without-iommu;
++			fixed-link {
++				speed = <1000>;
++				full-duplex;
++			};
++		};
++
++		/*
++		 * emmc needs spi0 (reset-controller) access. If spi0 and emmc are
++		 * not assigned together, remove cap-mmc-hw-reset, reset-names, resets.
++		 * (Elba: mmc@30440000 -> Salina: sdio-host-chip@600000)
++		 */
++		emmc: sdio-host-chip@600000 {
++			compatible = "amd,pensando-salina-sd4hc", "cdns,sd4hc";
++			clocks = <&emmc_clk>;
++			interrupt-parent = <&gic>;
++			interrupts = <0 51 4>;
++			reg = <0x0 0x600000 0x0 0x10000>,
++			      <0x0 0x680044 0x0 0x4>;
++			mmc-ddr-1_8v;
++			mmc-hs200-1_8v;
++			mmc-hs400-1_8v;
++			mmc-hs400-enhanced-strobe;
++			cdns,phy-input-delay-sd-highspeed = <0x4>;
++			cdns,phy-input-delay-legacy = <0x4>;
++			cdns,phy-input-delay-mmc-ddr = <0x8>;
++			cdns,phy-input-delay-sd-uhs-sdr50 = <0x6>;
++			cdns,phy-input-delay-sd-uhs-ddr50 = <0x16>;
++			cdns,phy-dll-delay-sdclk = <0x2f>;
++			bus-width = <8>;
++			cap-mmc-hw-reset;
++			reset-names = "hw";
++			resets = <&rstc 0>;
++			status = "okay";
++			xen,reg = <0x0 0x600000 0x0 0x10000 0x0 0x600000>,
++				  <0x0 0x680000 0x0 0x1000 0x0 0x680000>;
++			xen,path = "/soc/sdio-host-chip@600000";
++			xen,force-assign-without-iommu;
++		};
++
++		qspi1: spi@a0000 {
++			compatible = "amd,pensando-salina-qspi", "cdns,qspi-nor";
++			#address-cells = <1>;
++			#size-cells = <0>;
++			reg = <0x0 0xa0000 0x0 0x400>,
++			      <0x0 0x7fff0000 0x0 0x1000>;
++			interrupt-parent = <&gic>;
++			interrupts = <0 1 4>;
++			clocks = <&flash_clk>;
++			cdns,fifo-depth = <1024>;
++			cdns,fifo-width = <4>;
++			cdns,trigger-address = <0x07ff0000>;
++			status = "okay";
++
++			xen,reg = <0x0 0xa0000 0x0 0x1000 0x0 0xa0000>,
++				  <0x0 0x7fff0000 0x0 0x1000 0x0 0x7fff0000>;
++			xen,path = "/soc/spi@a0000";
++			xen,force-assign-without-iommu;
++
++			flash0: flash@0 {
++				compatible = "jedec,spi-nor";
++				reg = <0>;
++				spi-max-frequency = <40000000>;
++				spi-rx-bus-width = <2>;
++				m25p,fast-read;
++				cdns,read-delay = <6>;
++				cdns,tshsl-ns = <200>;
++				cdns,tsd2d-ns = <0>;
++				cdns,tchsh-ns = <0>;
++				cdns,tslch-ns = <0>;
++				write-block-size = <1024>;
++				erase-block-size = <4096>;
++			};
++		};
++
++		/* bsm (Salina: bsm@6100020c inside syscon page @61000000) */
++		bsm@6100020c {
++			compatible = "pensando,bsm";
++			reg = <0x0 0x6100020c 0x0 0x4>;
++			/* Register is already mapped by the syscon@61000000 passthrough
++			 * above, so use an empty xen,reg (node-assign only, no MMIO map).
++			 * Xen requires xen,reg to be present whenever xen,path is
++			 * (dom0less-build.c:367/377), same as gpio-controller@0.
++			 */
++			xen,reg;
++			xen,path = "/soc/bsm@6100020c";
++			xen,force-assign-without-iommu;
++		};
++
++		rstcause {
++			compatible = "pensando,rstcause";
++			pensando,causeregs = <&syscon 0x204>;
++		};
++	};
++};
++
++/include/ "salina-n1-flash-parts.dtsi"
++
++/*
++ * Dataplane note (Salina): pcie / kpcimgr / pciemac / uio_penmsi1 are owned by
++ * the A35 core (Zephyr) on Salina, NOT N1 Linux, so they are deliberately not
++ * passed through to this domU (unlike the Elba smartnic). capmem + captun above
++ * cover the Linux-side device memory and smartnic<->hostnic tunnel.
++ *
++ * Still to confirm whether these belong to N1 Linux on Salina (omitted for now):
++ *   sbus@...      (Elba sbus@307c24a8/b8/c8, sbus@6f242134)
++ *   panicdump@... (Elba panicdump@740b0000)
++ * Plus any U-Boot fixup blocks (ft_system_setup / edac_fdt_setup /
++ * emmc_bypass_setup) once confirmed.
++ */
+diff --git a/arch/arm64/boot/dts/amd/salina-asic-xen.dts b/arch/arm64/boot/dts/amd/salina-asic-xen.dts
+new file mode 100644
+index 000000000000..dd1c8f34d0e1
+--- /dev/null
++++ b/arch/arm64/boot/dts/amd/salina-asic-xen.dts
+@@ -0,0 +1,200 @@
++// SPDX-License-Identifier: (GPL-2.0-only or BSD-2-Clause)
++/*
++ * Device Tree file for AMD Pensando Salina Board - Xen dom0less host.
++ *
++ * Copyright 2023-2024 Advanced Micro Devices, Inc.
++ *
++ * This is the Xen hypervisor host device tree (equivalent of
++ * elba-asic-xen.dts). It carries the dom0less /chosen/domU0 + /chosen/domU1
++ * domain descriptions and cpupools. U-Boot patches the real /memory node and
++ * the SoC fixups in at boot (ft_system_setup), so only the Xen/domU layout and
++ * SoC nodes live here.
++ *
++ * Memory layout below is derived from the Leni_64GB U-Boot DDR map:
++ *   LINUX NS CC regions available to Xen/guests:
++ *     0x00_80000000..0x00_804fffff   5 MiB
++ *     0x00_80f00000..0x00_bfffffff   ~1009 MiB   (Xen + domU staging load area)
++ *     0x00_c4000000..0x00_dfffffff   448 MiB
++ *     0x82_00800000..0x82_bfffffff   ~2.99 GiB
++ *     0x87_1c000000..0x87_dfffffff   ~3.06 GiB
++ *     0x88_00000000..0x8f_f9ffffff   ~32 GiB     (top 96 MiB = mnet dma pool)
++ */
++
++/dts-v1/;
++
++/ {
++	model = "Salina ASIC Board";
++	compatible = "pensando,salina";
++
++	aliases {
++		serial1 = &uart1;
++		spi0 = &spi0;
++		spi1 = &spi1;
++		i2c0 = &i2c1;	/* i2c@20000 -> Linux i2c-0 */
++		i2c1 = &i2c2;	/* i2c@30000 -> Linux i2c-1 (Sensors) */
++		i2c2 = &i2c3;	/* i2c@40000 -> Linux i2c-2 (MCTP) */
++	};
++
++	chosen {
++		stdout-path = "serial1:115200n8";
++		bootargs = "earlycon=ns16550a,mmio32,0x100000 softdog.soft_panic=1 root=PARTUUID=D4E53BE5-7DC1-4199-914C-48EDFEA92C5E rootwait FW_NAME=mainfwa console=ttyS1,115200n8";
++		/*
++		 * sync_console is REQUIRED on Salina: the dtuart (serial@100000, GIC_SPI 5)
++		 * interrupt is not reliably delivered to Xen, and in this dom0less config
++		 * the console poll-timer runs on idle boot-CPU0 (Pool-0 has no dom0) and
++		 * stops draining once d1 runs. sync_console drains TX on the writing CPU,
++		 * sidestepping both. See memory: xen-salina-domu-console-hang.
++		 */
++		xen,xen-bootargs = "console=dtuart dtuart=serial1 sync_console loglvl=all guest_loglvl=all bootscrub=0 sched=null dom0_mem=4G dom0_max_vcpus=4";
++
++		/*
++		 * Salina has 16 A35 cores (0..15). dom0 takes the default pool
++		 * (cores 0-3, dom0_max_vcpus=4). smartnic gets 10 cores, hostnic
++		 * gets 2. Adjust core split per product requirements.
++		 */
++		smartnic_cpupool {
++			compatible = "xen,cpupool";
++			/* cores 4-13 (10). Use &cpuN label refs: cpupool-cpus
++			 * holds CPU-node phandles, not CPU indices.
++			 */
++			cpupool-cpus = <&cpu4 &cpu5 &cpu6 &cpu7 &cpu8
++					&cpu9 &cpu10 &cpu11 &cpu12 &cpu13>;
++			cpupool-sched = "null";
++			phandle = <0xfde7>;
++		};
++
++		hostnic_cpupool {
++			compatible = "xen,cpupool";
++			/* cores 14-15 (2) */
++			cpupool-cpus = <&cpu14 &cpu15>;
++			cpupool-sched = "null";
++			phandle = <0xfde6>;
++		};
++
++		domU0 {
++			compatible = "xen,domain";
++			#address-cells = <2>;
++			#size-cells = <2>;
++
++			/* 16 GiB. NB: "memory" is a scalar u64 in KiB (NOT the
++			 * addr/size-cell byte form used by xen,static-mem):
++			 * 16 GiB = 16777216 KiB = 0x0100_0000.
++			 */
++			memory = <0x00 0x01000000>;	/* 16 GiB in KiB */
++			cpus = <10>;	/* smartnic: cores 4-13 (smartnic_cpupool) */
++			vpl011;
++			direct-map;
++			domain-cpupool = <0xfde7>;
++
++			/* smartnic guest RAM: 16 GiB from the 32 GiB bank @ 0x88_00000000 */
++			xen,static-mem = <0x88 0x00000000 0x04 0x00000000>;
++
++			/* vsmc: required — Oracle Leni reference smartnic domain has it.
++			 * Without it the guest's post-PSCI SMCCC probing is not
++			 * virtualized and wedges the hypervisor (Xen console dead).
++			 *
++			 * Declared as a NODE with `strict;` (not a bare `vsmc;`
++			 * property): strict makes Xen's make_secure_mode_node() honor
++			 * the HOST /secure_mode/enable (U-Boot sets it from env
++			 * `secure_mode`) instead of hard-defaulting enable=1 for
++			 * non-strict domains (OCI Xen 4.22 commit 545958ab7c6c
++			 * "make vSMC secure mode strict opt-in"; node added by
++			 * 3f158e5e5f71). An empty node has no `id` child entries so
++			 * vsmc_policy.count==0
++			 * and the default SMC allow-switch is unchanged (penfw/crypto/
++			 * dice/secreg/barco still forward).
++			 */
++			vsmc {
++				strict;
++			};
++
++			module1 {
++				bootargs = "root=PARTUUID=D4E53BE5-7DC1-4199-914C-48EDFEA92C5E rootwait FW_NAME=mainfwa earlycon=pl011,mmio32,0x5000 console=ttyAMA0 softdog.soft_noboot=1 ignore_loglevel";
++				reg = <0x00000000 0x87000000 0x00000000 0x02000000>;
++				compatible = "multiboot,kernel", "multiboot,module";
++			};
++
++			module2 {
++				reg = <0x00000000 0x85000000 0x00000000 0x00010000>;
++				compatible = "multiboot,device-tree", "multiboot,module";
++			};
++		};
++
++		domU1 {
++			compatible = "xen,domain";
++			#address-cells = <2>;
++			#size-cells = <2>;
++
++			memory = <0x00 0x00200000>;	/* 2 GiB */
++			cpus = <2>;
++			vpl011;
++			direct-map;
++			domain-cpupool = <0xfde6>;
++
++			/* hostnic guest RAM: 2 GiB from the ~3 GiB bank @ 0x82_00800000 */
++			xen,static-mem = <0x82 0x00800000 0x00 0x80000000>;
++
++			module1 {
++				bootargs = "root=/dev/ram rw init=/init earlycon=pl011,mmio32,0x5000 console=ttyAMA0 softdog.soft_noboot=1 FW_NAME=goldfw ignore_loglevel";
++				reg = <0x00000000 0x90000000 0x00000000 0x02000000>;
++				compatible = "multiboot,kernel", "multiboot,module";
++			};
++
++			module2 {
++				reg = <0x00000000 0x86000000 0x00000000 0x00010000>;
++				compatible = "multiboot,device-tree", "multiboot,module";
++			};
++
++			ramdisk {
++				/*
++				 * Staging area in the first 4 GiB of DRAM U-Boot
++				 * can map.  Xen copies the initrd to domU1's
++				 * static-mem after boot.
++				 */
++				reg = <0x00000000 0x95000000 0x00000000 0x00800000>;
++				compatible = "multiboot,ramdisk", "multiboot,module";
++			};
++		};
++	};
++
++	tawkipc {
++		compatible = "amd,tawk-ipc";
++		peer-id = <1>;
++		#address-cells = <2>;
++		#size-cells = <1>;
++		reg = <0x0 0x0 0x0 0x0>,  /* doorbells */
++			<0x0 0x0 0x0 0x0>, /* msix-like table */
++			<0x47 0xe1d2b100 0x0 0x8>,  /* reset signal registers */
++			<0x47 0xe1d2c100 0x0 0x10>,	/* mailbox control registers */
++			<0x47 0xe1d2d100 0x0 0x800>;	/* mailbox buffers */
++		rst-sigs = <0x4 0x0>;
++		nmboxes = <2>;
++		mbox-ctl = <0x0 0x3>;
++		mbox-buf = <0x0 0xa 0x400>;
++		status = "okay";
++	};
++};
++
++#include "salina-asic.dtsi"
++#include "salina-16core.dtsi"
++#include "salina-16core-psci.dtsi"
++#include "salina-n1-common.dtsi"
++#include "salina-n1-flash-parts.dtsi"
++#include "elba-asic-memory.dtsi"
++#include "elba-mdev.dtsi"
++#include "salina-asic-common.dtsi"
++
++/*
++ * Route the CPLD->SoC interrupt (GPIO porta line, GIC SPI 2) to the smartnic
++ * domU. Xen dom0less passthrough routes IRQs via map_device_irqs_to_domain()
++ * on the node named by the guest's xen,path = "/soc/gpio@d0000", and reads
++ * only THAT node's "interrupts". The real SPI-2 IRQ is declared on the
++ * gpio-controller@0 child (porta), so the parent carries none and Xen routes
++ * nothing. Without this the rd1173 i2c completion IRQ (porta -> SPI 2) never
++ * reaches d1: every xfer hits "RD1173: timeout waiting for completion",
++ * resets, and retries forever, stalling mnic bring-up before login.
++ */
++&gpio0 {
++	interrupts = <0 2 4>;
++	interrupt-parent = <&gic>;
++};
+diff --git a/arch/arm64/configs/elba_xen_defconfig b/arch/arm64/configs/elba_xen_defconfig
+new file mode 100644
+index 000000000000..808237bc0665
+--- /dev/null
++++ b/arch/arm64/configs/elba_xen_defconfig
+@@ -0,0 +1,256 @@
++CONFIG_LOCALVERSION="-1"
++# CONFIG_LOCALVERSION_AUTO is not set
++CONFIG_DEFAULT_HOSTNAME="elba"
++CONFIG_SYSVIPC=y
++CONFIG_POSIX_MQUEUE=y
++CONFIG_AUDIT=y
++CONFIG_NO_HZ_FULL=y
++CONFIG_HIGH_RES_TIMERS=y
++CONFIG_BPF_JIT=y
++CONFIG_PREEMPT_VOLUNTARY=y
++CONFIG_LOG_BUF_SHIFT=14
++CONFIG_MEMCG=y
++CONFIG_BLK_CGROUP=y
++CONFIG_CGROUP_PIDS=y
++CONFIG_CGROUP_HUGETLB=y
++CONFIG_CPUSETS=y
++CONFIG_CGROUP_DEVICE=y
++CONFIG_CGROUP_CPUACCT=y
++CONFIG_CGROUP_PERF=y
++CONFIG_NAMESPACES=y
++CONFIG_USER_NS=y
++CONFIG_SCHED_AUTOGROUP=y
++CONFIG_BLK_DEV_INITRD=y
++CONFIG_EXPERT=y
++CONFIG_PROFILING=y
++CONFIG_ARCH_PENSANDO=y
++CONFIG_XEN=y
++CONFIG_ARM64_MODULE_PLTS=y
++# CONFIG_SUSPEND is not set
++CONFIG_JUMP_LABEL=y
++CONFIG_COMPAT_32BIT_TIME=y
++CONFIG_MODULES=y
++CONFIG_MODULE_UNLOAD=y
++CONFIG_BLK_DEV_BSGLIB=y
++CONFIG_BLK_DEV_INTEGRITY=y
++CONFIG_MEMORY_HOTPLUG=y
++# CONFIG_SWAP is not set
++# CONFIG_COMPAT_BRK is not set
++CONFIG_KSM=y
++CONFIG_NET=y
++CONFIG_PACKET=y
++CONFIG_UNIX=y
++CONFIG_XFRM_USER=y
++CONFIG_NET_KEY=y
++CONFIG_INET=y
++CONFIG_IP_MULTICAST=y
++CONFIG_IP_ADVANCED_ROUTER=y
++CONFIG_IP_MULTIPLE_TABLES=y
++CONFIG_IP_ROUTE_MULTIPATH=y
++CONFIG_IP_PNP=y
++CONFIG_IP_PNP_DHCP=y
++CONFIG_IP_PNP_BOOTP=y
++CONFIG_SYN_COOKIES=y
++CONFIG_INET_AH=y
++CONFIG_INET_ESP=y
++CONFIG_INET_IPCOMP=y
++CONFIG_TCP_MD5SIG=y
++CONFIG_NETFILTER=y
++CONFIG_NETFILTER_XT_TARGET_DSCP=y
++CONFIG_NETFILTER_XT_MATCH_DSCP=y
++CONFIG_NETFILTER_XT_MATCH_POLICY=y
++CONFIG_NETFILTER_XT_MATCH_PKTTYPE=y
++CONFIG_IP_NF_IPTABLES=y
++CONFIG_IP_NF_MATCH_AH=y
++CONFIG_IP_NF_MATCH_ECN=y
++CONFIG_IP_NF_MATCH_TTL=y
++CONFIG_IP_NF_FILTER=y
++CONFIG_IP_NF_TARGET_REJECT=y
++CONFIG_IP_NF_MANGLE=y
++CONFIG_IP_NF_TARGET_ECN=y
++CONFIG_IP_NF_TARGET_TTL=y
++CONFIG_BRIDGE=y
++CONFIG_VLAN_8021Q=y
++CONFIG_NET_PKTGEN=y
++# CONFIG_WIRELESS is not set
++CONFIG_PCI=y
++CONFIG_PCI_HOST_GENERIC=y
++CONFIG_DEVTMPFS=y
++CONFIG_DEVTMPFS_MOUNT=y
++# CONFIG_PREVENT_FIRMWARE_BUILD is not set
++CONFIG_MTD=y
++CONFIG_MTD_SPI_NOR=y
++# CONFIG_MTD_SPI_NOR_USE_4K_SECTORS is not set
++CONFIG_BLK_DEV_LOOP=y
++CONFIG_BLK_DEV_NBD=y
++CONFIG_BLK_DEV_RAM=y
++CONFIG_BLK_DEV_RAM_COUNT=2
++CONFIG_BLK_DEV_RAM_SIZE=65536
++CONFIG_XEN_BLKDEV_BACKEND=y
++CONFIG_VIRTIO_BLK=y
++CONFIG_EEPROM_AT24=y
++CONFIG_EEPROM_AT25=y
++CONFIG_SCSI=y
++CONFIG_XEN_SCSI_FRONTEND=y
++CONFIG_TARGET_CORE=y
++CONFIG_NETDEVICES=y
++CONFIG_BONDING=y
++CONFIG_TUN=y
++CONFIG_VIRTIO_NET=y
++# CONFIG_NET_VENDOR_3COM is not set
++# CONFIG_NET_VENDOR_ADAPTEC is not set
++# CONFIG_NET_VENDOR_AGERE is not set
++# CONFIG_NET_VENDOR_ALACRITECH is not set
++# CONFIG_NET_VENDOR_ALTEON is not set
++# CONFIG_NET_VENDOR_AMAZON is not set
++# CONFIG_NET_VENDOR_AMD is not set
++# CONFIG_NET_VENDOR_AQUANTIA is not set
++# CONFIG_NET_VENDOR_ARC is not set
++# CONFIG_NET_VENDOR_ATHEROS is not set
++# CONFIG_NET_VENDOR_BROADCOM is not set
++# CONFIG_NET_VENDOR_CADENCE is not set
++# CONFIG_NET_VENDOR_CAVIUM is not set
++# CONFIG_NET_VENDOR_CHELSIO is not set
++# CONFIG_NET_VENDOR_CISCO is not set
++# CONFIG_NET_VENDOR_CORTINA is not set
++# CONFIG_NET_VENDOR_DEC is not set
++# CONFIG_NET_VENDOR_DLINK is not set
++# CONFIG_NET_VENDOR_EMULEX is not set
++# CONFIG_NET_VENDOR_EZCHIP is not set
++# CONFIG_NET_VENDOR_GOOGLE is not set
++# CONFIG_NET_VENDOR_HUAWEI is not set
++# CONFIG_NET_VENDOR_INTEL is not set
++# CONFIG_NET_VENDOR_MARVELL is not set
++# CONFIG_NET_VENDOR_MELLANOX is not set
++# CONFIG_NET_VENDOR_MICREL is not set
++# CONFIG_NET_VENDOR_MICROCHIP is not set
++# CONFIG_NET_VENDOR_MICROSEMI is not set
++# CONFIG_NET_VENDOR_MYRI is not set
++# CONFIG_NET_VENDOR_NI is not set
++# CONFIG_NET_VENDOR_NATSEMI is not set
++# CONFIG_NET_VENDOR_NETERION is not set
++# CONFIG_NET_VENDOR_NETRONOME is not set
++# CONFIG_NET_VENDOR_NVIDIA is not set
++# CONFIG_NET_VENDOR_OKI is not set
++# CONFIG_NET_VENDOR_PACKET_ENGINES is not set
++# CONFIG_NET_VENDOR_QLOGIC is not set
++# CONFIG_NET_VENDOR_BROCADE is not set
++# CONFIG_NET_VENDOR_QUALCOMM is not set
++# CONFIG_NET_VENDOR_RDC is not set
++# CONFIG_NET_VENDOR_REALTEK is not set
++# CONFIG_NET_VENDOR_RENESAS is not set
++# CONFIG_NET_VENDOR_ROCKER is not set
++# CONFIG_NET_VENDOR_SAMSUNG is not set
++# CONFIG_NET_VENDOR_SEEQ is not set
++# CONFIG_NET_VENDOR_SILAN is not set
++# CONFIG_NET_VENDOR_SIS is not set
++# CONFIG_NET_VENDOR_SOLARFLARE is not set
++# CONFIG_NET_VENDOR_SMSC is not set
++# CONFIG_NET_VENDOR_SOCIONEXT is not set
++# CONFIG_NET_VENDOR_STMICRO is not set
++# CONFIG_NET_VENDOR_SUN is not set
++# CONFIG_NET_VENDOR_SYNOPSYS is not set
++# CONFIG_NET_VENDOR_TEHUTI is not set
++# CONFIG_NET_VENDOR_TI is not set
++# CONFIG_NET_VENDOR_VIA is not set
++# CONFIG_NET_VENDOR_WIZNET is not set
++# CONFIG_NET_VENDOR_XILINX is not set
++CONFIG_MDIO_DEVICE=y
++# CONFIG_WLAN is not set
++CONFIG_XEN_NETDEV_BACKEND=y
++# CONFIG_INPUT_KEYBOARD is not set
++# CONFIG_INPUT_MOUSE is not set
++CONFIG_INPUT_MISC=y
++# CONFIG_SERIO is not set
++CONFIG_VT_HW_CONSOLE_BINDING=y
++CONFIG_LEGACY_PTY_COUNT=16
++CONFIG_SERIAL_8250=y
++CONFIG_SERIAL_8250_CONSOLE=y
++# CONFIG_SERIAL_8250_PCI is not set
++CONFIG_SERIAL_OF_PLATFORM=y
++CONFIG_SERIAL_AMBA_PL011=y
++CONFIG_SERIAL_AMBA_PL011_CONSOLE=y
++CONFIG_VIRTIO_CONSOLE=y
++# CONFIG_HW_RANDOM is not set
++# CONFIG_DEVPORT is not set
++CONFIG_I2C=y
++CONFIG_I2C_CHARDEV=y
++CONFIG_I2C_DESIGNWARE_CORE=y
++CONFIG_I2C_RD1173=y
++CONFIG_SPI=y
++CONFIG_SPI_CADENCE_QUADSPI=y
++CONFIG_SPI_DESIGNWARE=y
++CONFIG_SPI_DW_MMIO=y
++CONFIG_SPI_SPIDEV=y
++CONFIG_GPIOLIB=y
++CONFIG_GPIO_DWAPB=y
++CONFIG_SENSORS_LM90=y
++CONFIG_PMBUS=y
++CONFIG_SENSORS_TPS53679=y
++CONFIG_WATCHDOG=y
++CONFIG_SOFT_WATCHDOG=y
++CONFIG_DW_WATCHDOG=y
++CONFIG_XEN_WDT=y
++CONFIG_MFD_PENSANDO_ELBASR=y
++CONFIG_FB=y
++# CONFIG_HID is not set
++# CONFIG_USB_SUPPORT is not set
++CONFIG_MMC=y
++CONFIG_MMC_DEBUG=y
++CONFIG_MMC_SDHCI=y
++CONFIG_MMC_SDHCI_PLTFM=y
++CONFIG_MMC_SDHCI_CADENCE=y
++CONFIG_EDAC=y
++CONFIG_EDAC_ELBA=y
++CONFIG_RTC_CLASS=y
++CONFIG_RTC_DRV_PCF85363=y
++CONFIG_SYNC_FILE=y
++CONFIG_UIO=y
++CONFIG_VIRTIO_PCI=y
++# CONFIG_XEN_BALLOON is not set
++CONFIG_XEN_GNTDEV=y
++CONFIG_XEN_GRANT_DEV_ALLOC=y
++CONFIG_XEN_SCSI_BACKEND=y
++CONFIG_CHROME_PLATFORMS=y
++CONFIG_COMMON_CLK_CS2000_CP=y
++# CONFIG_IOMMU_SUPPORT is not set
++CONFIG_PENSANDO_SOC_CAPMEM_HUGEPAGE=y
++CONFIG_PENSANDO_SOC_BSM_ENABLE=y
++CONFIG_PENSANDO_SOC_PENFW=y
++CONFIG_EXTCON=y
++CONFIG_RESET_CONTROLLER=y
++CONFIG_RESET_ELBASR=y
++CONFIG_GENERIC_PHY=y
++CONFIG_RAS=y
++CONFIG_EXT3_FS=y
++CONFIG_EXT4_FS_POSIX_ACL=y
++CONFIG_FANOTIFY=y
++CONFIG_FANOTIFY_ACCESS_PERMISSIONS=y
++CONFIG_FUSE_FS=y
++CONFIG_CUSE=y
++CONFIG_VIRTIO_FS=y
++CONFIG_OVERLAY_FS=y
++CONFIG_VFAT_FS=y
++CONFIG_TMPFS=y
++CONFIG_HUGETLBFS=y
++CONFIG_CONFIGFS_FS=y
++CONFIG_SQUASHFS=y
++# CONFIG_NETWORK_FILESYSTEMS is not set
++CONFIG_NLS_CODEPAGE_437=y
++CONFIG_NLS_ISO8859_1=y
++CONFIG_KEYS=y
++CONFIG_SECURITY=y
++CONFIG_CRYPTO_SHA1=y
++CONFIG_CRYPTO_LZO=y
++CONFIG_CRYPTO_ANSI_CPRNG=y
++# CONFIG_CRYPTO_HW is not set
++CONFIG_CRC_ITU_T=y
++CONFIG_CRC7=y
++CONFIG_LIBCRC32C=y
++CONFIG_PRINTK_TIME=y
++CONFIG_CONSOLE_LOGLEVEL_DEFAULT=4
++CONFIG_DYNAMIC_DEBUG=y
++CONFIG_DEBUG_FS=y
++CONFIG_DEBUG_MEMORY_INIT=y
++# CONFIG_FTRACE is not set
++CONFIG_MEMTEST=y
+diff --git a/arch/arm64/configs/salina_xen_defconfig b/arch/arm64/configs/salina_xen_defconfig
+new file mode 100644
+index 000000000000..52fe4e4f971c
+--- /dev/null
++++ b/arch/arm64/configs/salina_xen_defconfig
+@@ -0,0 +1,322 @@
++CONFIG_LOCALVERSION="-1"
++# CONFIG_LOCALVERSION_AUTO is not set
++CONFIG_DEFAULT_HOSTNAME="salina"
++CONFIG_SYSVIPC=y
++CONFIG_POSIX_MQUEUE=y
++CONFIG_AUDIT=y
++CONFIG_NO_HZ_FULL=y
++CONFIG_HIGH_RES_TIMERS=y
++CONFIG_BPF_SYSCALL=y
++CONFIG_BPF_JIT=y
++CONFIG_PREEMPT_VOLUNTARY=y
++CONFIG_RCU_EXPERT=y
++CONFIG_FORCE_TASKS_RUDE_RCU=y
++CONFIG_IKCONFIG=y
++CONFIG_IKCONFIG_PROC=y
++CONFIG_LOG_BUF_SHIFT=14
++CONFIG_MEMCG=y
++CONFIG_BLK_CGROUP=y
++CONFIG_CGROUP_PIDS=y
++CONFIG_CGROUP_HUGETLB=y
++CONFIG_CPUSETS=y
++CONFIG_CGROUP_DEVICE=y
++CONFIG_CGROUP_CPUACCT=y
++CONFIG_CGROUP_PERF=y
++CONFIG_USER_NS=y
++CONFIG_SCHED_AUTOGROUP=y
++CONFIG_BLK_DEV_INITRD=y
++CONFIG_PROFILING=y
++CONFIG_ARCH_PENSANDO=y
++CONFIG_XEN=y
++# CONFIG_ARM64_ERRATUM_826319 is not set
++# CONFIG_ARM64_ERRATUM_827319 is not set
++# CONFIG_ARM64_ERRATUM_824069 is not set
++# CONFIG_ARM64_ERRATUM_819472 is not set
++# CONFIG_ARM64_ERRATUM_832075 is not set
++# CONFIG_ARM64_ERRATUM_845719 is not set
++# CONFIG_ARM64_ERRATUM_843419 is not set
++# CONFIG_ARM64_ERRATUM_1024718 is not set
++# CONFIG_ARM64_ERRATUM_1418040 is not set
++# CONFIG_ARM64_ERRATUM_1165522 is not set
++# CONFIG_ARM64_ERRATUM_1530923 is not set
++# CONFIG_ARM64_ERRATUM_1463225 is not set
++# CONFIG_ARM64_ERRATUM_1508412 is not set
++# CONFIG_CAVIUM_ERRATUM_22375 is not set
++# CONFIG_CAVIUM_ERRATUM_23154 is not set
++# CONFIG_CAVIUM_ERRATUM_27456 is not set
++# CONFIG_CAVIUM_ERRATUM_30115 is not set
++# CONFIG_CAVIUM_TX2_ERRATUM_219 is not set
++# CONFIG_FUJITSU_ERRATUM_010001 is not set
++# CONFIG_HISILICON_ERRATUM_161600802 is not set
++# CONFIG_QCOM_FALKOR_ERRATUM_1003 is not set
++# CONFIG_QCOM_FALKOR_ERRATUM_1009 is not set
++# CONFIG_QCOM_QDF2400_ERRATUM_0065 is not set
++# CONFIG_QCOM_FALKOR_ERRATUM_E1041 is not set
++CONFIG_ARM64_VA_BITS_48=y
++CONFIG_SCHED_MC=y
++CONFIG_HOTPLUG_CPU=y
++CONFIG_COMPAT=y
++# CONFIG_ARM64_HW_AFDBM is not set
++# CONFIG_ARM64_PAN is not set
++# CONFIG_ARM64_USE_LSE_ATOMICS is not set
++# CONFIG_ARM64_RAS_EXTN is not set
++# CONFIG_ARM64_CNP is not set
++# CONFIG_ARM64_AMU_EXTN is not set
++# CONFIG_ARM64_BTI is not set
++# CONFIG_ARM64_E0PD is not set
++# CONFIG_ARM64_SVE is not set
++# CONFIG_RANDOMIZE_BASE is not set
++CONFIG_ARM64_MODULE_PLTS=y
++# CONFIG_EFI is not set
++# CONFIG_SUSPEND is not set
++CONFIG_CPU_IDLE=y
++CONFIG_JUMP_LABEL=y
++CONFIG_MODULES=y
++CONFIG_MODULE_UNLOAD=y
++CONFIG_BLK_DEV_BSGLIB=y
++CONFIG_BLK_DEV_INTEGRITY=y
++CONFIG_MEMORY_HOTPLUG=y
++# CONFIG_SWAP is not set
++# CONFIG_COMPAT_BRK is not set
++CONFIG_KSM=y
++CONFIG_TRANSPARENT_HUGEPAGE=y
++CONFIG_NET=y
++CONFIG_PACKET=y
++CONFIG_UNIX=y
++CONFIG_XFRM_USER=y
++CONFIG_NET_KEY=y
++CONFIG_INET=y
++CONFIG_IP_MULTICAST=y
++CONFIG_IP_ADVANCED_ROUTER=y
++CONFIG_IP_MULTIPLE_TABLES=y
++CONFIG_IP_ROUTE_MULTIPATH=y
++CONFIG_IP_PNP=y
++CONFIG_IP_PNP_DHCP=y
++CONFIG_IP_PNP_BOOTP=y
++CONFIG_SYN_COOKIES=y
++CONFIG_INET_AH=y
++CONFIG_INET_ESP=y
++CONFIG_INET_IPCOMP=y
++CONFIG_TCP_MD5SIG=y
++CONFIG_NETFILTER=y
++CONFIG_NETFILTER_XT_TARGET_DSCP=y
++CONFIG_NETFILTER_XT_MATCH_DSCP=y
++CONFIG_NETFILTER_XT_MATCH_POLICY=y
++CONFIG_NETFILTER_XT_MATCH_PKTTYPE=y
++CONFIG_IP_NF_IPTABLES=y
++CONFIG_IP_NF_MATCH_AH=y
++CONFIG_IP_NF_MATCH_ECN=y
++CONFIG_IP_NF_MATCH_TTL=y
++CONFIG_IP_NF_FILTER=y
++CONFIG_IP_NF_TARGET_REJECT=y
++CONFIG_IP_NF_MANGLE=y
++CONFIG_IP_NF_TARGET_ECN=y
++CONFIG_IP_NF_TARGET_TTL=y
++CONFIG_BRIDGE=y
++CONFIG_VLAN_8021Q=y
++CONFIG_NET_PKTGEN=y
++CONFIG_MCTP=y
++# CONFIG_WIRELESS is not set
++CONFIG_PCI=y
++CONFIG_PCI_HOST_GENERIC=y
++CONFIG_DEVTMPFS=y
++CONFIG_DEVTMPFS_MOUNT=y
++# CONFIG_PREVENT_FIRMWARE_BUILD is not set
++CONFIG_MTD=y
++CONFIG_MTD_SPI_NOR=y
++# CONFIG_MTD_SPI_NOR_USE_4K_SECTORS is not set
++CONFIG_BLK_DEV_LOOP=y
++CONFIG_BLK_DEV_NBD=y
++CONFIG_BLK_DEV_RAM=y
++CONFIG_BLK_DEV_RAM_COUNT=2
++CONFIG_BLK_DEV_RAM_SIZE=65536
++CONFIG_XEN_BLKDEV_BACKEND=y
++CONFIG_VIRTIO_BLK=y
++CONFIG_EEPROM_AT24=y
++CONFIG_EEPROM_AT25=y
++CONFIG_SCSI=y
++CONFIG_XEN_SCSI_FRONTEND=y
++CONFIG_TARGET_CORE=y
++CONFIG_MD=y
++CONFIG_BLK_DEV_DM=y
++CONFIG_DM_CRYPT=y
++CONFIG_DM_VERITY=y
++CONFIG_NETDEVICES=y
++CONFIG_BONDING=y
++CONFIG_TUN=y
++CONFIG_VIRTIO_NET=y
++# CONFIG_NET_VENDOR_3COM is not set
++# CONFIG_NET_VENDOR_ADAPTEC is not set
++# CONFIG_NET_VENDOR_AGERE is not set
++# CONFIG_NET_VENDOR_ALACRITECH is not set
++# CONFIG_NET_VENDOR_ALTEON is not set
++# CONFIG_NET_VENDOR_AMAZON is not set
++# CONFIG_NET_VENDOR_AMD is not set
++# CONFIG_NET_VENDOR_AQUANTIA is not set
++# CONFIG_NET_VENDOR_ARC is not set
++# CONFIG_NET_VENDOR_ATHEROS is not set
++# CONFIG_NET_VENDOR_BROADCOM is not set
++# CONFIG_NET_VENDOR_CADENCE is not set
++# CONFIG_NET_VENDOR_CAVIUM is not set
++# CONFIG_NET_VENDOR_CHELSIO is not set
++# CONFIG_NET_VENDOR_CISCO is not set
++# CONFIG_NET_VENDOR_CORTINA is not set
++# CONFIG_NET_VENDOR_DEC is not set
++# CONFIG_NET_VENDOR_DLINK is not set
++# CONFIG_NET_VENDOR_EMULEX is not set
++# CONFIG_NET_VENDOR_EZCHIP is not set
++# CONFIG_NET_VENDOR_GOOGLE is not set
++# CONFIG_NET_VENDOR_HISILICON is not set
++# CONFIG_NET_VENDOR_HUAWEI is not set
++# CONFIG_NET_VENDOR_INTEL is not set
++# CONFIG_NET_VENDOR_MARVELL is not set
++# CONFIG_NET_VENDOR_MELLANOX is not set
++# CONFIG_NET_VENDOR_MICREL is not set
++# CONFIG_NET_VENDOR_MICROCHIP is not set
++# CONFIG_NET_VENDOR_MICROSEMI is not set
++# CONFIG_NET_VENDOR_MYRI is not set
++# CONFIG_NET_VENDOR_NI is not set
++# CONFIG_NET_VENDOR_NATSEMI is not set
++# CONFIG_NET_VENDOR_NETERION is not set
++# CONFIG_NET_VENDOR_NETRONOME is not set
++# CONFIG_NET_VENDOR_NVIDIA is not set
++# CONFIG_NET_VENDOR_OKI is not set
++# CONFIG_NET_VENDOR_PACKET_ENGINES is not set
++# CONFIG_NET_VENDOR_QLOGIC is not set
++# CONFIG_NET_VENDOR_BROCADE is not set
++# CONFIG_NET_VENDOR_QUALCOMM is not set
++# CONFIG_NET_VENDOR_RDC is not set
++# CONFIG_NET_VENDOR_REALTEK is not set
++# CONFIG_NET_VENDOR_RENESAS is not set
++# CONFIG_NET_VENDOR_ROCKER is not set
++# CONFIG_NET_VENDOR_SAMSUNG is not set
++# CONFIG_NET_VENDOR_SEEQ is not set
++# CONFIG_NET_VENDOR_SILAN is not set
++# CONFIG_NET_VENDOR_SIS is not set
++# CONFIG_NET_VENDOR_SOLARFLARE is not set
++# CONFIG_NET_VENDOR_SMSC is not set
++# CONFIG_NET_VENDOR_SOCIONEXT is not set
++CONFIG_STMMAC_ETH=m
++# CONFIG_NET_VENDOR_SUN is not set
++# CONFIG_NET_VENDOR_SYNOPSYS is not set
++# CONFIG_NET_VENDOR_TEHUTI is not set
++# CONFIG_NET_VENDOR_TI is not set
++# CONFIG_NET_VENDOR_VIA is not set
++# CONFIG_NET_VENDOR_WIZNET is not set
++# CONFIG_NET_VENDOR_XILINX is not set
++CONFIG_MCTP_TRANSPORT_I2C=y
++CONFIG_MDIO_DEVICE=y
++# CONFIG_WLAN is not set
++CONFIG_XEN_NETDEV_BACKEND=y
++# CONFIG_INPUT_KEYBOARD is not set
++# CONFIG_INPUT_MOUSE is not set
++CONFIG_INPUT_MISC=y
++# CONFIG_SERIO is not set
++CONFIG_VT_HW_CONSOLE_BINDING=y
++CONFIG_LEGACY_PTY_COUNT=16
++CONFIG_SERIAL_8250=y
++CONFIG_SERIAL_8250_CONSOLE=y
++# CONFIG_SERIAL_8250_PCI is not set
++CONFIG_SERIAL_OF_PLATFORM=y
++CONFIG_SERIAL_AMBA_PL011=y
++CONFIG_SERIAL_AMBA_PL011_CONSOLE=y
++CONFIG_VIRTIO_CONSOLE=y
++# CONFIG_HW_RANDOM is not set
++# CONFIG_DEVPORT is not set
++CONFIG_I2C=y
++CONFIG_I2C_CHARDEV=y
++CONFIG_I2C_DESIGNWARE_CORE=y
++CONFIG_I2C_DESIGNWARE_SLAVE=y
++CONFIG_I2C_RD1173=y
++CONFIG_I2C_SLAVE_TESTUNIT=y
++CONFIG_SPI=y
++CONFIG_SPI_CADENCE_QUADSPI=y
++CONFIG_SPI_CPLD_SPIMUX=y
++CONFIG_SPI_DESIGNWARE=y
++CONFIG_SPI_DW_MMIO=y
++CONFIG_SPI_SPIDEV=y
++CONFIG_GPIOLIB=y
++CONFIG_GPIO_DWAPB=y
++CONFIG_SENSORS_LM90=y
++CONFIG_PMBUS=y
++CONFIG_SENSORS_TPS53679=y
++CONFIG_SENSORS_INA3221=y
++CONFIG_THERMAL=y
++# CONFIG_THERMAL_OF is not set
++CONFIG_WATCHDOG=y
++CONFIG_SOFT_WATCHDOG=y
++CONFIG_DW_WATCHDOG=y
++CONFIG_XEN_WDT=y
++CONFIG_MFD_PENSANDO_ELBASR=y
++CONFIG_FB=y
++# CONFIG_HID is not set
++# CONFIG_USB_SUPPORT is not set
++CONFIG_MMC=y
++CONFIG_MMC_DEBUG=y
++CONFIG_MMC_SDHCI=y
++CONFIG_MMC_SDHCI_PLTFM=y
++CONFIG_MMC_SDHCI_CADENCE=y
++CONFIG_INFINIBAND=y
++CONFIG_INFINIBAND_USER_ACCESS=y
++CONFIG_EDAC=y
++CONFIG_EDAC_SALINA=y
++CONFIG_RTC_CLASS=y
++CONFIG_RTC_DRV_PCF85363=y
++CONFIG_SYNC_FILE=y
++CONFIG_UIO=y
++CONFIG_VIRTIO_PCI=y
++# CONFIG_XEN_BALLOON is not set
++CONFIG_XEN_GNTDEV=y
++CONFIG_XEN_GRANT_DEV_ALLOC=y
++CONFIG_XEN_SCSI_BACKEND=y
++CONFIG_CHROME_PLATFORMS=y
++CONFIG_COMMON_CLK_CS2000_CP=y
++# CONFIG_FSL_ERRATUM_A008585 is not set
++# CONFIG_HISILICON_ERRATUM_161010101 is not set
++# CONFIG_ARM64_ERRATUM_858921 is not set
++# CONFIG_IOMMU_SUPPORT is not set
++CONFIG_ARCH_PENSANDO_SALINA_SOC=y
++CONFIG_PENSANDO_SOC_BSM_ENABLE=y
++CONFIG_PENSANDO_SOC_PENFW=y
++CONFIG_EXTCON=y
++CONFIG_RESET_ELBASR=y
++CONFIG_GENERIC_PHY=y
++CONFIG_ARM_CMN=y
++CONFIG_RAS=y
++CONFIG_EXT3_FS=y
++CONFIG_EXT4_FS_POSIX_ACL=y
++CONFIG_FANOTIFY=y
++CONFIG_FANOTIFY_ACCESS_PERMISSIONS=y
++CONFIG_FUSE_FS=y
++CONFIG_CUSE=y
++CONFIG_VIRTIO_FS=y
++CONFIG_OVERLAY_FS=y
++CONFIG_VFAT_FS=y
++CONFIG_TMPFS=y
++CONFIG_HUGETLBFS=y
++CONFIG_CONFIGFS_FS=y
++CONFIG_SQUASHFS=y
++# CONFIG_NETWORK_FILESYSTEMS is not set
++CONFIG_NLS_CODEPAGE_437=y
++CONFIG_NLS_ISO8859_1=y
++CONFIG_KEYS=y
++CONFIG_SECURITY=y
++CONFIG_CRYPTO_LZO=y
++CONFIG_CRYPTO_ANSI_CPRNG=y
++CONFIG_CRYPTO_GHASH_ARM64_CE=y
++CONFIG_CRYPTO_SHA1_ARM64_CE=y
++CONFIG_CRYPTO_SHA2_ARM64_CE=y
++CONFIG_CRYPTO_SHA512_ARM64=y
++CONFIG_CRYPTO_AES_ARM64_BS=y
++CONFIG_CRYPTO_AES_ARM64_CE_CCM=y
++# CONFIG_CRYPTO_HW is not set
++CONFIG_CRC_ITU_T=y
++CONFIG_CRC7=y
++CONFIG_LIBCRC32C=y
++CONFIG_PRINTK_TIME=y
++CONFIG_CONSOLE_LOGLEVEL_DEFAULT=4
++CONFIG_DYNAMIC_DEBUG=y
++CONFIG_MAGIC_SYSRQ=y
++CONFIG_DEBUG_FS=y
++# CONFIG_STRICT_DEVMEM is not set
++CONFIG_MEMTEST=y
+-- 
+2.25.1
+
