@@ -37,23 +37,15 @@ detect.
 Tested on Leni boards with WDC, Phison and Kingston eMMC devices.
 The cards run at HS400 enhanced strobe, 200 MHz, 8-bit.
 ```
-**0004-soc-pensando-penfw-secure-services-support-in-new-ioctl-argument-format.patch**<br>
+**0004-soc-pensando-penfw-new-secure-services-ioctl-support.patch**<br>
 ```
-soc: pensando: penfw: secure services support in new ioctl argument format
+soc: pensando: penfw: new secure services ioctl support
 
-Few additional changes:
-- use local variables to save the passed in lengths, to prevent memory leak/corruption during free
-- Pass the input and output lengths in x5 and x6 registers of the SMC call to support EL3 services that need to know buffer sizes.
-- Remove unsafe is_user_address_valid() function (High). Function used find_vma() incorrectly (only checks first byte). It was missing proper RCU/task lifetime handling. Kernel's copy_from_user/copy_to_user already validate addresses
-- Add mutex serialization to PENFW_SVC path (High)
-- Remove pid parameter from penfw_svc_smc() (cleanup)
-- Make penfw_dev globally accessible (cleanup)
-- Fix GFP allocation flags. Removed GFP_ATOMIC from GFP_KERNEL | GFP_ATOMIC
-- Fix UAPI struct penfw_svc_args. Changed uint64_t/uint16_t to __u64/__u16 (kernel UAPI types) Added explicit padding: reserved1 (2 bytes), reserved2 (6 bytes) to prevent compiler-dependent ABI padding issues
--  pensando: penfw - add packed attribute and ioctl size validation
-- Add static_assert checks to verify the struct layout: Total size must be 48 bytes, value field at offset 24 (verifies 6-byte padding after length_in) and status field at offset 40 (verifies 6-byte padding after length_out). These compile-time checks ensure the explicit padding in penfw_svc_args produces the expected layout, catching any compiler that might add different padding or misalign fields.
-
----------
+Add new PENFW_SVC ioctl. This ioctl expects argument in the format
+(func_id, sub_func_id, length, value). This is to make the penfw driver
+agnostic of the secure services implemented in EL3. Extensive checks for
+the arguments can be done in EL3 and kernel need not do any validation
+on them.
 ```
 **0005-soc-pensando-penfw-add-DICE-SMC-ioctl.patch**<br>
 ```
